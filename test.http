@@ -1,0 +1,11 @@
+### 1. 测试根路径 (Hello World)
+GET http://localhost:8000/
+Accept: application/json
+
+### 2. 测试带参数的路径
+GET http://localhost:8000/items/123?q=hello_world
+Accept: application/json
+
+### 3. 访问自动生成的 Swagger 文档 (在浏览器打开)
+# 这一行只是注释，实际测试请直接点击下面这个链接或者在浏览器输入
+# http://localhost:8000/docs
