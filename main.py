@@ -1,6 +1,6 @@
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional
 from urllib.parse import quote
 
@@ -12,12 +12,17 @@ from fastapi import (
     Form,
     HTTPException,
     UploadFile,
+    status,
 )
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+
+# 在现有导入下面添加
+from fastapi.security import OAuth2PasswordRequestForm
+from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
-from database import ExtractionRecord, get_db, init_db
+from database import ExtractionRecord, User, get_db, init_db
+from services.auth import AuthService, get_current_user
 from services.db_service import DBService
 from services.llm_extractor import LLMExtractor
 from services.parser import DocumentParser
@@ -43,6 +48,30 @@ class ExtractRequest(BaseModel):
 
 class FillTableRequest(BaseModel):
     fields: List[str]
+
+
+# ==================== 数据模型 ====================
+
+
+class ExtractRequest(BaseModel):
+    fields: List[str]
+
+
+class FillTableRequest(BaseModel):
+    fields: List[str]
+
+
+# ===== 新增：认证相关模型 =====
+class UserCreate(BaseModel):
+    username: str
+    password: str
+    email: EmailStr
+
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+    user_info: dict
 
 
 # ==================== 基础接口 ====================
@@ -320,7 +349,10 @@ async def search_extractions(keyword: str, db: Session = Depends(get_db)):
 
 @app.get("/api/extractions")
 async def list_extractions(
-    limit: int = 20, offset: int = 0, db: Session = Depends(get_db)
+    limit: int = 20,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),  # 此接口只有登录后才能访问
 ):
     """获取提取历史记录列表"""
     records = DBService.list_extractions(db, limit=limit, offset=offset)
@@ -371,3 +403,74 @@ async def delete_extraction_record(record_id: str, db: Session = Depends(get_db)
         raise HTTPException(404, "记录不存在")
 
     return {"message": "删除成功", "record_id": record_id}
+
+
+# ==================== 认证接口 ====================
+
+
+@app.post("/api/auth/register", response_model=dict)
+async def register(user_data: UserCreate, db: Session = Depends(get_db)):
+    """用户注册"""
+    # 检查用户是否存在
+    existing = (
+        db.query(User)
+        .filter((User.username == user_data.username) | (User.email == user_data.email))
+        .first()
+    )
+
+    if existing:
+        raise HTTPException(400, "用户名或邮箱已存在")
+
+    # 创建用户
+    user = User(
+        id=str(uuid.uuid4())[:8],
+        username=user_data.username,
+        email=user_data.email,
+        hashed_password=AuthService.get_password_hash(user_data.password),
+    )
+
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    return {"message": "注册成功", "user_id": user.id, "username": user.username}
+
+
+@app.post("/api/auth/login", response_model=Token)
+async def login(
+    form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)
+):
+    """用户登录"""
+    # 查找用户
+    user = db.query(User).filter(User.username == form_data.username).first()
+
+    if not user or not AuthService.verify_password(
+        form_data.password, user.hashed_password
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="用户名或密码错误",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # 创建 Token
+    access_token = AuthService.create_access_token(
+        data={"sub": user.username}, expires_delta=timedelta(minutes=30)
+    )
+
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user_info": {"id": user.id, "username": user.username, "email": user.email},
+    }
+
+
+@app.get("/api/auth/me", response_model=dict)
+async def get_current_user_info(current_user: User = Depends(get_current_user)):
+    """获取当前用户信息"""
+    return {
+        "id": current_user.id,
+        "username": current_user.username,
+        "email": current_user.email,
+        "is_active": current_user.is_active,
+    }

@@ -1,7 +1,16 @@
 import os
 from datetime import datetime
 
-from sqlalchemy import JSON, Column, DateTime, Integer, String, Text, create_engine
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Column,
+    DateTime,
+    Integer,
+    String,
+    Text,
+    create_engine,
+)
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
@@ -53,6 +62,22 @@ class FileRecord(Base):
     created_at = Column(DateTime, default=datetime.now)
 
 
+# ==================== 用户模型（新增） ====================
+
+
+class User(Base):
+    """用户表"""
+
+    __tablename__ = "users"
+
+    id = Column(String, primary_key=True, index=True)
+    username = Column(String, unique=True, index=True, nullable=False)
+    email = Column(String, unique=True, index=True)
+    hashed_password = Column(String, nullable=False)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.now)
+
+
 # ==================== 依赖项 ====================
 
 
@@ -73,5 +98,33 @@ def init_db():
     Base.metadata.create_all(bind=engine)
     print("✅ 数据库初始化成功")
 
+    # 创建初始管理员账号
+    create_initial_user()
 
-# dd7064b2
+
+def create_initial_user():
+    """创建初始管理员账号"""
+    from sqlalchemy.orm import Session
+
+    from services.auth import AuthService
+
+    db = SessionLocal()
+    try:
+        # 检查是否已有用户
+        existing = db.query(User).first()
+        if existing:
+            print("ℹ️  已存在用户，跳过创建")
+            return
+
+        # 创建管理员
+        admin = User(
+            id="admin001",
+            username="admin",
+            email="admin@example.com",
+            hashed_password=AuthService.get_password_hash("admin123"),
+        )
+        db.add(admin)
+        db.commit()
+        print("✅ 初始管理员创建成功 (用户名: admin, 密码: admin123)")
+    finally:
+        db.close()
