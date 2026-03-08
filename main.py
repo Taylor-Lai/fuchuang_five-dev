@@ -438,32 +438,54 @@ async def register(user_data: UserCreate, db: Session = Depends(get_db)):
 
 @app.post("/api/auth/login", response_model=Token)
 async def login(
-    form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)
+    form_data: OAuth2PasswordRequestForm = Depends(), 
+    db: Session = Depends(get_db)
 ):
-    """用户登录"""
-    # 查找用户
-    user = db.query(User).filter(User.username == form_data.username).first()
-
+    """用户登录（仅支持邮箱）"""
+    import re
+    
+    # 1. 获取并标准化邮箱
+    email = form_data.username.strip().lower()
+    
+    # 2. 强制校验邮箱格式（❌ 不是邮箱直接拒绝）
+    email_regex = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    if not re.match(email_regex, email):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="请使用邮箱地址登录"
+        )
+    
+    # 3. 只通过邮箱查询用户（❌ 不再查询 username）
+    user = db.query(User).filter(User.email == email).first()
+    
+    # 4. 验证密码
     if not user or not AuthService.verify_password(
         form_data.password, user.hashed_password
     ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="用户名或密码错误",
+            detail="邮箱或密码错误",
             headers={"WWW-Authenticate": "Bearer"},
         )
-
-    # 创建 Token
+    
+    # 5. 检查账户状态
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="账户已被禁用"
+        )
+    
+    # 6. 创建 Token（使用 user.id 作为 sub）
     access_token = AuthService.create_access_token(
-        data={"sub": user.username}, expires_delta=timedelta(minutes=30)
+        data={"sub": user.id}, 
+        expires_delta=timedelta(minutes=30)
     )
-
+    
     return {
         "access_token": access_token,
         "token_type": "bearer",
         "user_info": {"id": user.id, "username": user.username, "email": user.email},
     }
-
 
 @app.get("/api/auth/me", response_model=dict)
 async def get_current_user_info(current_user: User = Depends(get_current_user)):

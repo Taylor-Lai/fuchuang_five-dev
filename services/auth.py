@@ -25,14 +25,17 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 class AuthService:
     """认证服务"""
 
+class AuthService:
+    """认证服务"""
+
     @staticmethod
     def verify_password(plain_password: str, hashed_password: str) -> bool:
-        """验证密码"""
+        """验证密码（统一使用 passlib）"""
         return pwd_context.verify(plain_password, hashed_password)
 
     @staticmethod
     def get_password_hash(password: str) -> str:
-        """密码哈希"""
+        """密码哈希（统一使用 passlib）"""
         return pwd_context.hash(password)
 
     @staticmethod
@@ -74,11 +77,13 @@ async def get_current_user(
     if payload is None:
         raise credentials_exception
 
-    username: str = payload.get("sub")
-    if username is None:
+    # 🔹 从 token 中获取用户 ID（不再是 username）
+    user_id: str = payload.get("sub")
+    if user_id is None:
         raise credentials_exception
 
-    user = db.query(User).filter(User.username == username).first()
+    # 🔹 通过 ID 查询用户（✅ 更稳定，不受邮箱/用户名变更影响）
+    user = db.query(User).filter(User.id == user_id).first()
     if user is None:
         raise credentials_exception
 
