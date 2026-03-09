@@ -15,9 +15,6 @@ from fastapi import (
     status,
 )
 from fastapi.responses import StreamingResponse
-
-# 在现有导入下面添加
-from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
@@ -66,6 +63,11 @@ class UserCreate(BaseModel):
     username: str
     password: str
     email: EmailStr
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
 
 
 class Token(BaseModel):
@@ -408,7 +410,7 @@ async def delete_extraction_record(record_id: str, db: Session = Depends(get_db)
 # ==================== 认证接口 ====================
 
 
-@app.post("/api/auth/register", response_model=dict)
+@app.post("/auth/register", response_model=dict)
 async def register(user_data: UserCreate, db: Session = Depends(get_db)):
     """用户注册"""
     # 检查用户是否存在
@@ -436,60 +438,38 @@ async def register(user_data: UserCreate, db: Session = Depends(get_db)):
     return {"message": "注册成功", "user_id": user.id, "username": user.username}
 
 
-@app.post("/api/auth/login", response_model=Token)
+@app.post("/auth/login", response_model=Token)
 async def login(
-    form_data: OAuth2PasswordRequestForm = Depends(), 
-    db: Session = Depends(get_db)
+    login_data: LoginRequest, db: Session = Depends(get_db)
 ):
-    """用户登录（仅支持邮箱）"""
-    import re
-    
-    # 1. 获取并标准化邮箱
-    email = form_data.username.strip().lower()
-    
-    # 2. 强制校验邮箱格式（❌ 不是邮箱直接拒绝）
-    email_regex = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-    if not re.match(email_regex, email):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="请使用邮箱地址登录"
-        )
-    
-    # 3. 只通过邮箱查询用户（❌ 不再查询 username）
-    user = db.query(User).filter(User.email == email).first()
-    
-    # 4. 验证密码
+    """用户登录"""
+    # 根据邮箱查找用户
+    user = db.query(User).filter(User.email == login_data.email).first()
+
     if not user or not AuthService.verify_password(
-        form_data.password, user.hashed_password
+        login_data.password, user.hashed_password
     ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="邮箱或密码错误",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
-    # 5. 检查账户状态
-    if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="账户已被禁用"
-        )
-    
-    # 6. 创建 Token（使用 user.id 作为 sub）
+
+    # 创建 Token (使用用户ID作为sub，这样更通用)
     access_token = AuthService.create_access_token(
-        data={"sub": user.id}, 
-        expires_delta=timedelta(minutes=30)
+        data={"sub": user.id}, expires_delta=timedelta(minutes=30)
     )
-    
+
     return {
         "access_token": access_token,
         "token_type": "bearer",
         "user_info": {"id": user.id, "username": user.username, "email": user.email},
     }
 
-@app.get("/api/auth/me", response_model=dict)
-async def get_current_user_info(current_user: User = Depends(get_current_user)):
-    """获取当前用户信息"""
+
+@app.get("/user/profile", response_model=dict)
+async def get_user_profile(current_user: User = Depends(get_current_user)):
+    """获取个人信息"""
     return {
         "id": current_user.id,
         "username": current_user.username,

@@ -127,4 +127,4 @@ def create_initial_user():
         db.commit()
         print("✅ 初始管理员创建成功 (用户名: admin, 密码: admin123)")
     finally:
-        db.close()
+        db.close() 

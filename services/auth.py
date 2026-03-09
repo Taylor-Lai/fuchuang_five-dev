@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
@@ -18,12 +18,9 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30
 # 密码加密
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-# OAuth2 方案
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
+# HTTP Bearer 方案（替代 OAuth2PasswordBearer）
+security = HTTPBearer()
 
-
-class AuthService:
-    """认证服务"""
 
 class AuthService:
     """认证服务"""
@@ -64,7 +61,8 @@ class AuthService:
 
 
 async def get_current_user(
-    token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)
+    credentials: HTTPAuthorizationCredentials = Depends(security), 
+    db: Session = Depends(get_db)
 ) -> User:
     """获取当前用户（用于需要登录的接口）"""
     credentials_exception = HTTPException(
@@ -73,6 +71,8 @@ async def get_current_user(
         headers={"WWW-Authenticate": "Bearer"},
     )
 
+    # 从 credentials 中获取 token
+    token = credentials.credentials
     payload = AuthService.decode_access_token(token)
     if payload is None:
         raise credentials_exception
