@@ -76,6 +76,15 @@ class Token(BaseModel):
     user_info: dict
 
 
+# ===== 新增：修改个人资料模型 =====
+class UserProfileUpdate(BaseModel):
+    """修改个人资料请求模型"""
+    nickname: Optional[str] = None
+    gender: Optional[str] = None
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
+
+
 # ==================== 基础接口 ====================
 
 
@@ -474,5 +483,59 @@ async def get_user_profile(current_user: User = Depends(get_current_user)):
         "id": current_user.id,
         "username": current_user.username,
         "email": current_user.email,
+        "nickname": current_user.nickname,
+        "gender": current_user.gender,
+        "phone": current_user.phone,
         "is_active": current_user.is_active,
+    }
+
+
+# 添加修改个人资料接口
+@app.put("/user/profile", response_model=dict)
+async def update_user_profile(
+    profile_data: UserProfileUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """修改个人资料"""
+    # 检查邮箱是否已被其他用户使用
+    if profile_data.email and profile_data.email != current_user.email:
+        existing_user = db.query(User).filter(User.email == profile_data.email).first()
+        if existing_user:
+            raise HTTPException(400, "邮箱已被其他用户使用")
+    
+    # 验证性别字段
+    if profile_data.gender and profile_data.gender not in ["男", "女"]:
+        raise HTTPException(400, "性别只能是'男'或'女'")
+    
+    # 验证手机号格式（简单验证）
+    if profile_data.phone:
+        import re
+        phone_regex = r'^1[3-9]\d{9}$'
+        if not re.match(phone_regex, profile_data.phone):
+            raise HTTPException(400, "手机号格式不正确")
+    
+    # 更新用户信息
+    if profile_data.nickname is not None:
+        current_user.nickname = profile_data.nickname
+    if profile_data.gender is not None:
+        current_user.gender = profile_data.gender
+    if profile_data.email is not None:
+        current_user.email = profile_data.email
+    if profile_data.phone is not None:
+        current_user.phone = profile_data.phone
+    
+    db.commit()
+    db.refresh(current_user)
+    
+    return {
+        "message": "个人资料更新成功",
+        "user": {
+            "id": current_user.id,
+            "username": current_user.username,
+            "email": current_user.email,
+            "nickname": current_user.nickname,
+            "gender": current_user.gender,
+            "phone": current_user.phone,
+        }
     }

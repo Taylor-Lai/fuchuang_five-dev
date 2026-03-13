@@ -74,6 +74,9 @@ class User(Base):
     username = Column(String, unique=True, index=True, nullable=False)
     email = Column(String, unique=True, index=True)
     hashed_password = Column(String, nullable=False)
+    nickname = Column(String, nullable=True)  # 昵称
+    gender = Column(String, nullable=True)  # 性别：男/女
+    phone = Column(String, nullable=True)  # 手机号
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.now)
 
@@ -98,6 +101,8 @@ def init_db():
     Base.metadata.create_all(bind=engine)
     print("✅ 数据库初始化成功")
 
+    # 执行数据库迁移
+    migrate_db()
     # 创建初始管理员账号
     create_initial_user()
 
@@ -128,3 +133,34 @@ def create_initial_user():
         print("✅ 初始管理员创建成功 (用户名: admin, 密码: admin123)")
     finally:
         db.close() 
+
+def migrate_db():
+    """执行数据库迁移"""
+    from sqlalchemy import text
+    
+    db = SessionLocal()
+    try:
+        # 检查是否已存在这些字段
+        result = db.execute(text("PRAGMA table_info(users)"))
+        columns = [column[1] for column in result.fetchall()]
+        
+        # 如果字段不存在，添加它们
+        if "nickname" not in columns:
+            db.execute(text("ALTER TABLE users ADD COLUMN nickname TEXT"))
+            print("✅ 添加 nickname 字段成功")
+        
+        if "gender" not in columns:
+            db.execute(text("ALTER TABLE users ADD COLUMN gender TEXT"))
+            print("✅ 添加 gender 字段成功")
+        
+        if "phone" not in columns:
+            db.execute(text("ALTER TABLE users ADD COLUMN phone TEXT"))
+            print("✅ 添加 phone 字段成功")
+        
+        db.commit()
+        print("✅ 数据库迁移完成")
+    except Exception as e:
+        print(f"❌ 迁移失败：{str(e)}")
+        db.rollback()
+    finally:
+        db.close()
