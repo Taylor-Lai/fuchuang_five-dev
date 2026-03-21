@@ -48,10 +48,24 @@ class DocumentParser:
     @staticmethod
     def _parse_docx(content_bytes: bytes) -> str:
         """解析 Word 文档"""
-        doc = docx.Document(BytesIO(content_bytes))
-        # 提取所有段落文本，用换行符连接
-        paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
-        return "\n".join(paragraphs)
+        try:
+            # 检查文件是否为有效的 ZIP 文件
+            import zipfile
+            zipfile.ZipFile(BytesIO(content_bytes))
+        except zipfile.BadZipFile:
+            raise Exception("上传的文件不是有效的 .docx 文件")
+    
+        try:
+            doc = docx.Document(BytesIO(content_bytes))
+            # 提取所有段落文本，用换行符连接
+            paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
+            return "\n".join(paragraphs)
+        except Exception as e:
+            # 详细的错误信息
+            import traceback
+            print(f"解析 .docx 文件失败: {str(e)}")
+            print(traceback.format_exc())
+            raise Exception(f"Word 文档解析失败: {str(e)}")
 
     @staticmethod
     def _parse_xlsx(content_bytes: bytes) -> str:

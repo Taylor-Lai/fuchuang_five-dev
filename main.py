@@ -125,7 +125,7 @@ async def upload_document(file: UploadFile = File(...)):
 # ==================== 核心提取接口 ====================
 
 
-@app.post("/api/extract")
+@app.post("/doc-extract/upload")
 async def extract_info(
     file: UploadFile = File(..., description="源文档 (.docx, .txt 等)"),
     fields: str = Form(..., description="需要提取的字段，用逗号分隔"),
@@ -185,15 +185,17 @@ async def extract_info(
 # ==================== 表格填写接口 ====================
 
 
-@app.post("/api/fill-table")
+@app.post("/table-fill/upload")
 async def fill_table(
     template: UploadFile = File(..., description="Excel 模板文件 (.xlsx)"),
-    document: UploadFile = File(..., description="源文档 (.docx, .txt 等)"),
-    fields: str = Form(..., description="需要提取并填写的字段，用逗号分隔"),
+    document: UploadFile = File(..., description="源文档 (.docx, .txt, .md 等)"),
     db: Session = Depends(get_db),
 ):
     """
-    【核心功能】上传 Excel 模板 + 文档 → 自动填写表格
+    【核心功能】上传 Excel 模板 + 文档 → 自动识别字段并填写表格
+    
+    自动从 Excel 模板的第一行表头中提取字段名称，
+    然后从文档中提取对应数据并填写到表格中。
     """
     try:
         # 1. 校验文件类型
@@ -204,13 +206,26 @@ async def fill_table(
         parse_result = await DocumentParser.parse_file(document)
         text_content = parse_result["content"]
 
-        # 3. 处理字段列表
-        fields_list = [
-            f.strip() for f in fields.replace("，", ",").split(",") if f.strip()
-        ]
-
+        # 3. 从 Excel 模板中自动提取表头字段
+        template_bytes = await template.read()
+        from openpyxl import load_workbook
+        from io import BytesIO
+        
+        wb = load_workbook(BytesIO(template_bytes))
+        ws = wb.active
+        
+        # 获取第一行表头
+        fields_list = []
+        for cell in ws[1]:  # 第一行
+            if cell.value:
+                field_name = str(cell.value).strip()
+                if field_name:
+                    fields_list.append(field_name)
+        
         if not fields_list:
-            raise HTTPException(400, "请至少指定一个填写字段")
+            raise HTTPException(400, "Excel 模板第一行没有找到表头字段")
+
+        print(f"📋 自动识别的字段列表：{fields_list}")
 
         # 4. 调用大模型提取数据
         extracted_data = LLMExtractor.extract_info(text_content, fields_list)
@@ -218,15 +233,12 @@ async def fill_table(
         if "error" in extracted_data:
             raise HTTPException(500, f"AI 提取失败：{extracted_data['error']}")
 
-        # 5. 读取 Excel 模板
-        template_bytes = await template.read()
-
-        # 6. 填充表格
+        # 5. 填充表格
         filled_file = TableFiller.fill_template(
             template_bytes=template_bytes, extracted_data=extracted_data
         )
 
-        # 7. 保存提取记录到数据库
+        # 6. 保存提取记录到数据库
         record = DBService.save_extraction(
             db=db,
             filename=parse_result["filename"],
@@ -237,7 +249,7 @@ async def fill_table(
             status="success",
         )
 
-        # 8. 返回填充后的文件
+        # 7. 返回填充后的文件
         filename = f"filled_{template.filename}"
         encoded_filename = quote(filename)
 
@@ -255,7 +267,7 @@ async def fill_table(
         raise HTTPException(500, f"填表失败：{str(e)}")
 
 
-@app.post("/api/fill-table/simple")
+@app.post("/table-fill/simple")
 async def fill_table_simple(
     document: UploadFile = File(..., description="源文档"),
     fields: str = Form(..., description="需要提取的字段，用逗号分隔"),
@@ -334,7 +346,7 @@ async def fill_table_simple(
 # ==================== 历史记录接口 ====================
 
 
-@app.get("/api/extractions/search")
+@app.get("/doc-extract/search")
 async def search_extractions(keyword: str, db: Session = Depends(get_db)):
     """搜索提取记录"""
     if not keyword or len(keyword) < 2:
@@ -358,7 +370,7 @@ async def search_extractions(keyword: str, db: Session = Depends(get_db)):
     }
 
 
-@app.get("/api/extractions")
+@app.get("/doc-extract")
 async def list_extractions(
     limit: int = 20,
     offset: int = 0,
@@ -385,7 +397,7 @@ async def list_extractions(
     }
 
 
-@app.get("/api/extractions/{record_id}")
+@app.get("/doc-extract/{record_id}")
 async def get_extraction_record(record_id: str, db: Session = Depends(get_db)):
     """查询提取记录（从数据库）"""
     record = DBService.get_extraction(db, record_id)
@@ -405,7 +417,7 @@ async def get_extraction_record(record_id: str, db: Session = Depends(get_db)):
     }
 
 
-@app.delete("/api/extractions/{record_id}")
+@app.delete("/doc-extract/{record_id}")
 async def delete_extraction_record(record_id: str, db: Session = Depends(get_db)):
     """删除提取记录"""
     success = DBService.delete_extraction(db, record_id)
@@ -539,3 +551,131 @@ async def update_user_profile(
             "phone": current_user.phone,
         }
     }
+
+
+
+# ===== 新增：文档智能操作模块 =====
+from services.nlp_command_parser import NLPCommandParser, ParsedCommand
+from services.document_operator import DocumentOperator
+
+
+class DocumentOperationRequest(BaseModel):
+    """文档操作请求模型"""
+    command: str  # 自然语言指令
+    document: Optional[UploadFile] = None  # 可选的文档文件
+
+
+class DocumentOperationResponse(BaseModel):
+    """文档操作响应模型"""
+    success: bool
+    message: str
+    result: Optional[dict] = None
+    confidence: Optional[float] = None
+
+
+@app.post("/doc-chat/upload", response_model=DocumentOperationResponse)
+async def operate_document(
+    command: str = Form(..., description="自然语言指令"),
+    document: UploadFile = File(..., description="文档文件"),
+):
+    """
+    文档智能操作接口
+    
+    通过自然语言指令对文档进行编辑、排版、格式调整等操作
+    """
+    try:
+        # 1. 读取文档内容
+        document_bytes = await document.read()
+        
+        # 2. 解析文档内容（用于上下文）
+        # 读取文档内容作为上下文，以便LLM能够理解文档的实际内容
+        try:
+            from docx import Document
+            from io import BytesIO
+            doc = Document(BytesIO(document_bytes))
+            document_content = "\n".join([p.text for p in doc.paragraphs if p.text.strip()])
+        except Exception:
+            document_content = ""  # 如果解析失败，使用空字符串
+        
+        # 3. 解析自然语言指令
+        parsed_command = NLPCommandParser.parse_command(command, document_content)  # 传递文档内容作为上下文
+        
+        # 4. 执行文档操作
+        operator = DocumentOperator(document_bytes)
+        operation_result = operator.execute_command(parsed_command)
+        
+        # 5. 返回修改后的文档
+        if operation_result["success"]:
+            modified_document = operator.get_modified_document()
+            
+            # 保存到临时文件
+            import tempfile
+            import os
+            
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_file:
+                tmp_file.write(modified_document)
+                tmp_file.flush()
+                tmp_filename = tmp_file.name
+            
+            # 返回文件
+            from fastapi.responses import FileResponse
+            return FileResponse(
+                tmp_filename,
+                media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                filename=f"modified_{document.filename}"
+            )
+        else:
+            return operation_result
+            
+    except Exception as e:
+        raise HTTPException(500, f"文档操作失败: {str(e)}")
+
+@app.get("/api/document/command-examples", response_model=dict)
+async def get_command_examples():
+    """
+    获取常用指令示例
+    """
+    examples = NLPCommandParser.get_command_examples()
+    return {
+        "categories": examples,
+        "total": len(examples)
+    }
+
+
+@app.post("/api/document/preview", response_model=dict)
+async def preview_operation(
+    command: str = Form(..., description="自然语言指令"),
+    document: UploadFile = File(..., description="文档文件"),
+):
+    """
+    预览操作效果
+    
+    不实际修改文档，只返回操作预览结果
+    """
+    try:
+        # 1. 读取文档内容
+        document_bytes = await document.read()
+        
+        # 2. 解析自然语言指令（不需要文档内容作为上下文）
+        parsed_command = NLPCommandParser.parse_command(command, "")
+        
+        # 3. 执行操作并获取预览
+        operator = DocumentOperator(document_bytes)
+        operation_result = operator.execute_command(parsed_command)
+        
+        # 4. 获取文档预览
+        preview_text = operator.get_document_preview()
+        
+        return {
+            "command": command,
+            "parsed_operation": {
+                "type": parsed_command.operation_type.value,
+                "params": parsed_command.params,
+                "confidence": parsed_command.confidence
+            },
+            "operation_result": operation_result,
+            "document_preview": preview_text
+        }
+        
+    except Exception as e:
+        raise HTTPException(500, f"预览失败: {str(e)}")

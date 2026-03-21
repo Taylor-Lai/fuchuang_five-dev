@@ -58,6 +58,19 @@ class TableFiller:
                     # 检查是否有数据
                     if extract_field in extracted_data:
                         value = extracted_data[extract_field]
+                        
+                        # 处理嵌套字典或复杂结构
+                        if isinstance(value, dict):
+                            # 将字典转换为格式化的字符串
+                            import json
+                            value = json.dumps(value, ensure_ascii=False, indent=2)
+                        elif isinstance(value, list):
+                            # 将列表转换为字符串
+                            value = ', '.join(str(v) for v in value)
+                        else:
+                            # 确保是字符串或数字
+                            value = str(value) if value is not None else ""
+                        
                         cell_ref = f"{col_letter}{row_idx}"
                         ws[cell_ref] = value
                         print(f"✍️  填写 {cell_ref} [{header}] = {value}")
