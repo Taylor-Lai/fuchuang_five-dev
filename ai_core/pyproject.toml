@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "any2table"
+version = "0.1.0"
+description = "Any2table MVP skeleton with extensible orchestration and agent hooks."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "openpyxl>=3.1.0",
+]
+
+[project.scripts]
+any2table = "any2table.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

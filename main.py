@@ -1,8 +1,10 @@
 import os
 import uuid
+import tempfile
 from datetime import datetime, timedelta
 from typing import List, Optional
 from urllib.parse import quote
+from pathlib import Path
 
 from fastapi import (
     BackgroundTasks,
@@ -11,10 +13,11 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Request,
     UploadFile,
     status,
 )
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
@@ -25,6 +28,10 @@ from services.llm_extractor import LLMExtractor
 from services.parser import DocumentParser
 from services.table_filler import TableFiller
 
+# 导入 ai_core engine 模块
+from ai_core.engine.engine import handle_module_1_format, handle_module_2_extract, handle_module_3_fusion
+from ai_core.engine.schemas import Mod1_FormatInput, Mod2_ExtractInput, Mod3_FusionInput
+
 app = FastAPI(title="文档理解系统", version="1.0.0")
 
 # ==================== 启动事件 ====================
@@ -34,17 +41,6 @@ app = FastAPI(title="文档理解系统", version="1.0.0")
 def startup_event():
     init_db()
     print("🚀 服务启动完成")
-
-
-# ==================== 数据模型 ====================
-
-
-class ExtractRequest(BaseModel):
-    fields: List[str]
-
-
-class FillTableRequest(BaseModel):
-    fields: List[str]
 
 
 # ==================== 数据模型 ====================
@@ -122,149 +118,10 @@ async def upload_document(file: UploadFile = File(...)):
         raise HTTPException(500, f"上传失败：{str(e)}")
 
 
-# ==================== 核心提取接口 ====================
+# ==================== 核心提取接口（已删除，使用新的 /doc-extract/upload）====================
 
 
-@app.post("/doc-extract/upload")
-async def extract_info(
-    file: UploadFile = File(..., description="源文档 (.docx, .txt 等)"),
-    fields: str = Form(..., description="需要提取的字段，用逗号分隔"),
-    db: Session = Depends(get_db),
-):
-    """
-    【核心接口】上传文档 + 提取字段 → 返回提取结果（存入数据库）
-    """
-    try:
-        # 1. 解析文档
-        parse_result = await DocumentParser.parse_file(file)
-        text_content = parse_result["content"]
-
-        # 2. 处理字段列表（支持中英文逗号）
-        fields_list = [
-            f.strip() for f in fields.replace("，", ",").split(",") if f.strip()
-        ]
-
-        if not fields_list:
-            raise HTTPException(400, "请至少指定一个填写字段")
-
-        # 3. 调用大模型提取数据
-        extracted_data = LLMExtractor.extract_info(text_content, fields_list)
-
-        # 4. 保存记录到数据库（无论成功失败）
-        status = "failed" if "error" in extracted_data else "success"
-        record = DBService.save_extraction(
-            db=db,
-            filename=parse_result["filename"],
-            file_type=parse_result["file_type"],
-            fields_requested=fields_list,
-            extracted_data=extracted_data,
-            content_preview=text_content,
-            status=status,
-        )
-
-        # 5. 检查是否提取失败
-        if "error" in extracted_data:
-            raise HTTPException(500, f"AI 提取失败：{extracted_data['error']}")
-
-        return {
-            "status": "success",
-            "task_id": record.id,
-            "filename": record.filename,
-            "fields_requested": record.fields_requested,
-            "extracted_data": record.extracted_data,
-            "created_at": record.created_at.isoformat(),
-            "query_url": f"/api/extractions/{record.id}",
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(500, f"提取失败：{str(e)}")
-
-
-# ==================== 表格填写接口 ====================
-
-
-@app.post("/table-fill/upload")
-async def fill_table(
-    template: UploadFile = File(..., description="Excel 模板文件 (.xlsx)"),
-    document: UploadFile = File(..., description="源文档 (.docx, .txt, .md 等)"),
-    db: Session = Depends(get_db),
-):
-    """
-    【核心功能】上传 Excel 模板 + 文档 → 自动识别字段并填写表格
-    
-    自动从 Excel 模板的第一行表头中提取字段名称，
-    然后从文档中提取对应数据并填写到表格中。
-    """
-    try:
-        # 1. 校验文件类型
-        if not template.filename.lower().endswith(".xlsx"):
-            raise HTTPException(400, "模板文件必须是 .xlsx 格式")
-
-        # 2. 解析文档
-        parse_result = await DocumentParser.parse_file(document)
-        text_content = parse_result["content"]
-
-        # 3. 从 Excel 模板中自动提取表头字段
-        template_bytes = await template.read()
-        from openpyxl import load_workbook
-        from io import BytesIO
-        
-        wb = load_workbook(BytesIO(template_bytes))
-        ws = wb.active
-        
-        # 获取第一行表头
-        fields_list = []
-        for cell in ws[1]:  # 第一行
-            if cell.value:
-                field_name = str(cell.value).strip()
-                if field_name:
-                    fields_list.append(field_name)
-        
-        if not fields_list:
-            raise HTTPException(400, "Excel 模板第一行没有找到表头字段")
-
-        print(f"📋 自动识别的字段列表：{fields_list}")
-
-        # 4. 调用大模型提取数据
-        extracted_data = LLMExtractor.extract_info(text_content, fields_list)
-
-        if "error" in extracted_data:
-            raise HTTPException(500, f"AI 提取失败：{extracted_data['error']}")
-
-        # 5. 填充表格
-        filled_file = TableFiller.fill_template(
-            template_bytes=template_bytes, extracted_data=extracted_data
-        )
-
-        # 6. 保存提取记录到数据库
-        record = DBService.save_extraction(
-            db=db,
-            filename=parse_result["filename"],
-            file_type=parse_result["file_type"],
-            fields_requested=fields_list,
-            extracted_data=extracted_data,
-            content_preview=text_content,
-            status="success",
-        )
-
-        # 7. 返回填充后的文件
-        filename = f"filled_{template.filename}"
-        encoded_filename = quote(filename)
-
-        return StreamingResponse(
-            filled_file,
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={
-                "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
-            },
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(500, f"填表失败：{str(e)}")
+# ==================== 表格填写接口（已删除，使用新的 /table-fill/upload）====================
 
 
 @app.post("/table-fill/simple")
@@ -461,7 +318,9 @@ async def register(user_data: UserCreate, db: Session = Depends(get_db)):
 
 @app.post("/auth/login", response_model=Token)
 async def login(
-    login_data: LoginRequest, db: Session = Depends(get_db)
+    login_data: LoginRequest, 
+    db: Session = Depends(get_db),
+    request: Request = None
 ):
     """用户登录"""
     # 根据邮箱查找用户
@@ -476,15 +335,70 @@ async def login(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # 创建 Token (使用用户ID作为sub，这样更通用)
+    # 更新登录信息
+    from datetime import datetime
+    user.last_login_time = datetime.now()
+    user.last_activity_time = datetime.now()  # 初始化最后活动时间
+    if request:
+        user.last_login_ip = request.client.host
+    user.login_status = "在线"
+    db.commit()
+    db.refresh(user)
+
+    # 创建 Token (使用用户ID作为sub，过期时间为3小时)
     access_token = AuthService.create_access_token(
-        data={"sub": user.id}, expires_delta=timedelta(minutes=30)
+        data={"sub": user.id}, expires_delta=timedelta(hours=3)
     )
 
     return {
         "access_token": access_token,
         "token_type": "bearer",
         "user_info": {"id": user.id, "username": user.username, "email": user.email},
+    }
+
+
+@app.post("/auth/logout")
+async def logout(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """用户登出"""
+    # 更新登录状态为离线
+    current_user.login_status = "离线"
+    db.commit()
+    db.refresh(current_user)
+    
+    return {
+        "code": 200,
+        "message": "登出成功",
+        "data": {}
+    }
+
+
+@app.post("/auth/heartbeat")
+async def heartbeat(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    用户心跳接口，用于保持在线状态
+    前端需要定期调用（建议每5分钟一次）
+    """
+    # 更新最后活动时间（不更新 last_login_time）
+    current_user.last_activity_time = datetime.now()
+    # 确保状态为在线
+    if current_user.login_status != "在线":
+        current_user.login_status = "在线"
+    db.commit()
+    db.refresh(current_user)
+    
+    return {
+        "code": 200,
+        "message": "心跳成功",
+        "data": {
+            "user_id": current_user.id,
+            "login_status": current_user.login_status
+        }
     }
 
 
@@ -554,128 +468,550 @@ async def update_user_profile(
 
 
 
-# ===== 新增：文档智能操作模块 =====
-from services.nlp_command_parser import NLPCommandParser, ParsedCommand
-from services.document_operator import DocumentOperator
+# ==================== 文档智能操作接口（已删除，使用新的 /doc-chat/upload）====================
 
+# ==================== 新接口：基于 ai_core 的三个模块 ====================
 
-class DocumentOperationRequest(BaseModel):
-    """文档操作请求模型"""
-    command: str  # 自然语言指令
-    document: Optional[UploadFile] = None  # 可选的文档文件
-
-
-class DocumentOperationResponse(BaseModel):
-    """文档操作响应模型"""
-    success: bool
-    message: str
-    result: Optional[dict] = None
-    confidence: Optional[float] = None
-
-
-@app.post("/doc-chat/upload", response_model=DocumentOperationResponse)
-async def operate_document(
-    command: str = Form(..., description="自然语言指令"),
-    document: UploadFile = File(..., description="文档文件"),
+@app.post("/doc-chat/upload")
+async def doc_chat_upload(
+    background_tasks: BackgroundTasks,
+    command: str = Form(..., description="自然语言指令，例如：'把第一段变成红色字体，并且加粗'"),
+    document: UploadFile = File(..., description="Word 文档文件 (.docx)"),
 ):
     """
-    文档智能操作接口
+    【模块一】文档智能操作交互
     
     通过自然语言指令对文档进行编辑、排版、格式调整等操作
     """
     try:
-        # 1. 读取文档内容
-        document_bytes = await document.read()
+        # 0. 校验文件类型
+        if not document.filename.lower().endswith(".docx"):
+            raise HTTPException(400, "仅支持 .docx 文件进行格式调整")
+
+        # 1. 保存上传的文件到临时目录
+        temp_dir = Path(tempfile.gettempdir()) / f"doc_chat_{uuid.uuid4().hex[:8]}"
+        temp_dir.mkdir(parents=True, exist_ok=True)
         
-        # 2. 解析文档内容（用于上下文）
-        # 读取文档内容作为上下文，以便LLM能够理解文档的实际内容
-        try:
-            from docx import Document
-            from io import BytesIO
-            doc = Document(BytesIO(document_bytes))
-            document_content = "\n".join([p.text for p in doc.paragraphs if p.text.strip()])
-        except Exception:
-            document_content = ""  # 如果解析失败，使用空字符串
+        file_path = temp_dir / document.filename
+        with open(file_path, "wb") as f:
+            content = await document.read()
+            f.write(content)
         
-        # 3. 解析自然语言指令
-        parsed_command = NLPCommandParser.parse_command(command, document_content)  # 传递文档内容作为上下文
+        # 2. 调用 ai_core engine 的模块一处理函数
+        input_data = Mod1_FormatInput(
+            file_path=str(file_path),
+            natural_language_cmd=command
+        )
         
-        # 4. 执行文档操作
-        operator = DocumentOperator(document_bytes)
-        operation_result = operator.execute_command(parsed_command)
+        result = handle_module_1_format(input_data)
         
-        # 5. 返回修改后的文档
-        if operation_result["success"]:
-            modified_document = operator.get_modified_document()
-            
-            # 保存到临时文件
-            import tempfile
-            import os
-            
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_file:
-                tmp_file.write(modified_document)
-                tmp_file.flush()
-                tmp_filename = tmp_file.name
-            
-            # 返回文件
-            from fastapi.responses import FileResponse
+        # 3. 返回处理后的文件，并设置后台任务删除临时目录
+        if result.status == "success":
+            def cleanup_temp():
+                import shutil
+                try:
+                    shutil.rmtree(temp_dir)
+                    print(f"🧹 已清理临时目录: {temp_dir}")
+                except Exception as e:
+                    print(f"⚠️ 清理失败: {e}")
+
+            background_tasks.add_task(cleanup_temp)
+
+            # 处理中文文件名编码
+            filename = f"formatted_{document.filename}"
+            encoded_filename = quote(filename)
+
             return FileResponse(
-                tmp_filename,
+                result.processed_file_path,
                 media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                filename=f"modified_{document.filename}"
+                headers={
+                    "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
+                }
             )
         else:
-            return operation_result
+            raise HTTPException(500, f"文档操作失败：{result.message}")
             
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(500, f"文档操作失败: {str(e)}")
+        raise HTTPException(500, f"文档操作失败：{str(e)}")
 
-@app.get("/api/document/command-examples", response_model=dict)
-async def get_command_examples():
+
+# 模块二：非结构化文档信息提取
+@app.post("/doc-extract/upload")
+async def doc_extract_upload(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(..., description="源文档 (.docx, .txt, .md, .xlsx 等)"),
+    fields: str = Form(..., description="需要提取的字段，用逗号分隔"),
+    db: Session = Depends(get_db),
+):
     """
-    获取常用指令示例
+    【模块二】非结构化文档信息提取
+    
+    从文档中提取指定的字段信息
     """
-    examples = NLPCommandParser.get_command_examples()
+    try:
+        # 1. 保存上传的文件到临时目录
+        temp_dir = Path(tempfile.gettempdir()) / f"doc_extract_{uuid.uuid4().hex[:8]}"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        
+        file_path = temp_dir / file.filename
+        with open(file_path, "wb") as f:
+            content = await file.read()
+            f.write(content)
+        
+        # 2. 处理字段列表（支持中英文逗号）
+        fields_list = [
+            f.strip() for f in fields.replace("，", ",").split(",") if f.strip()
+        ]
+        
+        if not fields_list:
+            raise HTTPException(400, "请至少指定一个提取字段")
+        
+        # 3. 调用 ai_core engine 的模块二处理函数
+        input_data = Mod2_ExtractInput(
+            file_path=str(file_path),
+            target_entities=fields_list
+        )
+        
+        result = handle_module_2_extract(input_data)
+
+        # 4. 后台任务删除临时目录
+        def cleanup_temp():
+            import shutil
+            try:
+                shutil.rmtree(temp_dir)
+                print(f"🧹 已清理临时目录: {temp_dir}")
+            except Exception as e:
+                print(f"⚠️ 清理失败: {e}")
+
+        background_tasks.add_task(cleanup_temp)
+        
+        # 5. 保存记录到数据库
+        if result.status == "success":
+            record = DBService.save_extraction(
+                db=db,
+                filename=file.filename,
+                file_type=file.filename.split('.')[-1] if '.' in file.filename else 'unknown',
+                fields_requested=fields_list,
+                extracted_data=result.extracted_data,
+                content_preview=str(result.extracted_data)[:500],
+                status="success",
+            )
+            
+            return {
+                "status": "success",
+                "task_id": record.id,
+                "filename": file.filename,
+                "fields_requested": fields_list,
+                "extracted_data": result.extracted_data,
+                "created_at": record.created_at.isoformat(),
+            }
+        else:
+            raise HTTPException(500, f"信息提取失败：{result.message}")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"信息提取失败：{str(e)}")
+
+
+# 模块三：表格自定义数据填写
+@app.post("/table-fill/upload")
+async def table_fill_upload(
+    background_tasks: BackgroundTasks,
+    template: UploadFile = File(..., description="Excel 模板文件 (.xlsx)"),
+    documents: List[UploadFile] = File(..., description="源文档 (.docx, .txt, .md 等)"),
+    user_request: str = Form("", description="用户的附加自然语言要求（可选）"),
+    db: Session = Depends(get_db),
+):
+    """
+    【模块三】表格自定义数据填写（多源融合填表）
+    
+    上传 Excel 模板和源文档，自动提取信息并填写到表格中
+    使用多智能体系统进行跨文档特征提取与对齐
+    """
+    try:
+        # 1. 校验模板文件类型
+        if not template.filename.lower().endswith(".xlsx"):
+            raise HTTPException(400, "模板文件必须是 .xlsx 格式")
+        
+        # 2. 创建工作空间目录
+        workspace_dir = Path(tempfile.gettempdir()) / f"table_fill_{uuid.uuid4().hex[:8]}"
+        workspace_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 3. 保存模板文件
+        template_path = workspace_dir / f"模板{template.filename}"
+        with open(template_path, "wb") as f:
+            content = await template.read()
+            f.write(content)
+        
+        # 4. 保存源文档
+        source_files = []
+        for document in documents:
+            doc_path = workspace_dir / document.filename
+            with open(doc_path, "wb") as f:
+                content = await document.read()
+                f.write(content)
+            source_files.append(doc_path)
+        
+        # 5. 调用 ai_core engine 的模块三处理函数
+        task_id = str(uuid.uuid4())[:8]
+        input_data = Mod3_FusionInput(
+            task_id=task_id,
+            workspace_dir=str(workspace_dir),
+            user_request=user_request if user_request else None
+        )
+        
+        result = handle_module_3_fusion(input_data)
+        
+        # 6. 返回填充后的文件，并设置后台任务删除临时目录
+        if result.status == "success":
+            # 保存记录到数据库
+            # 构建文件名列表
+            doc_filenames = [doc.filename for doc in documents]
+            filename_str = f"{template.filename} + {', '.join(doc_filenames)}"
+            
+            record = DBService.save_extraction(
+                db=db,
+                filename=filename_str,
+                file_type="xlsx",
+                fields_requested=[],
+                extracted_data={"output_path": result.output_excel_path},
+                content_preview=f"多源数据融合，生成文件：{result.output_excel_path}",
+                status="success",
+            )
+            
+            def cleanup_temp():
+                import shutil
+                try:
+                    shutil.rmtree(workspace_dir)
+                    print(f"🧹 已清理临时目录: {workspace_dir}")
+                except Exception as e:
+                    print(f"⚠️ 清理失败: {e}")
+
+            background_tasks.add_task(cleanup_temp)
+
+            # 处理中文文件名编码
+            filename = f"filled_{template.filename}"
+            encoded_filename = quote(filename)
+            print(f"✅ 生成的输出文件路径: {result.output_excel_path}")
+            return FileResponse(
+                result.output_excel_path,
+                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                headers={
+                    "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
+                }
+            )
+        else:
+            raise HTTPException(500, f"表格填写失败：{result.error_msg}")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"表格填写失败：{str(e)}")
+
+
+# ==================== 后台管理接口 ====================
+
+# 新增：用户列表分页接口
+@app.get("/admin/user/page")
+async def get_user_page(
+    page: int = 1,
+    page_size: int = 10,
+    keyword: Optional[str] = None,
+    status: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    【管理员】用户列表分页接口
+    
+    - page: 页码，默认1
+    - page_size: 每页数量，默认10
+    - keyword: 搜索关键词（用户名/邮箱）
+    - status: 状态筛选（active/inactive）
+    """
+    # 检查管理员权限
+    if current_user.role != "管理员":
+        raise HTTPException(status_code=403, detail="无权限访问")
+    
+    # 清理长时间未活动的在线用户（超过15分钟没有心跳）
+    timeout = datetime.now() - timedelta(minutes=15)
+    inactive_users = db.query(User).filter(
+        User.login_status == "在线",
+        User.last_activity_time < timeout
+    ).all()
+    
+    for user in inactive_users:
+        user.login_status = "离线"
+    
+    if inactive_users:
+        db.commit()
+    
+    # 构建查询
+    query = db.query(User)
+    
+    # 关键词搜索
+    if keyword:
+        query = query.filter(
+            (User.username.ilike(f"%{keyword}%") | 
+             User.email.ilike(f"%{keyword}%") |
+             User.nickname.ilike(f"%{keyword}%")
+            )
+        )
+    
+    # 状态筛选
+    if status == "active":
+        query = query.filter(User.is_active == True)
+    elif status == "inactive":
+        query = query.filter(User.is_active == False)
+    
+    # 计算总数
+    total = query.count()
+    
+    # 分页
+    offset = (page - 1) * page_size
+    users = query.offset(offset).limit(page_size).all()
+    
+    # 构建响应
+    user_list = []
+    for user in users:
+        user_list.append({
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "nickname": user.nickname,
+            "gender": user.gender,
+            "phone": user.phone,
+            "role": user.role,
+            "is_active": user.is_active,
+            "login_status": user.login_status,
+            "last_login_time": user.last_login_time.isoformat() if user.last_login_time else None,
+            "last_activity_time": user.last_activity_time.isoformat() if user.last_activity_time else None,
+            "last_login_ip": user.last_login_ip,
+            "created_at": user.created_at.isoformat()
+        })
+    
     return {
-        "categories": examples,
-        "total": len(examples)
+        "code": 200,
+        "message": "操作成功",
+        "data": {
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "list": user_list
+        }
     }
 
 
-@app.post("/api/document/preview", response_model=dict)
-async def preview_operation(
-    command: str = Form(..., description="自然语言指令"),
-    document: UploadFile = File(..., description="文档文件"),
+# 新增：用户详情接口
+@app.get("/admin/user/{user_id}")
+async def get_user_detail(
+    user_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     """
-    预览操作效果
-    
-    不实际修改文档，只返回操作预览结果
+    【管理员】用户详情接口
     """
-    try:
-        # 1. 读取文档内容
-        document_bytes = await document.read()
-        
-        # 2. 解析自然语言指令（不需要文档内容作为上下文）
-        parsed_command = NLPCommandParser.parse_command(command, "")
-        
-        # 3. 执行操作并获取预览
-        operator = DocumentOperator(document_bytes)
-        operation_result = operator.execute_command(parsed_command)
-        
-        # 4. 获取文档预览
-        preview_text = operator.get_document_preview()
-        
-        return {
-            "command": command,
-            "parsed_operation": {
-                "type": parsed_command.operation_type.value,
-                "params": parsed_command.params,
-                "confidence": parsed_command.confidence
-            },
-            "operation_result": operation_result,
-            "document_preview": preview_text
+    # 检查管理员权限
+    if current_user.role != "管理员":
+        raise HTTPException(status_code=403, detail="无权限访问")
+    
+    # 查找用户
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    
+    # 构建响应
+    user_info = {
+        "id": user.id,
+        "username": user.username,
+        "email": user.email,
+        "nickname": user.nickname,
+        "gender": user.gender,
+        "phone": user.phone,
+        "role": user.role,
+        "is_active": user.is_active,
+        "login_status": user.login_status,
+        "last_login_time": user.last_login_time.isoformat() if user.last_login_time else None,
+        "last_activity_time": user.last_activity_time.isoformat() if user.last_activity_time else None,
+        "last_login_ip": user.last_login_ip,
+        "remark": user.remark,
+        "created_at": user.created_at.isoformat()
+    }
+    
+    return {
+        "code": 200,
+        "message": "操作成功",
+        "data": user_info
+    }
+
+
+# 新增：启用/禁用用户接口
+@app.put("/admin/user/{user_id}/status")
+async def update_user_status(
+    user_id: str,
+    is_active: bool,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    【管理员】启用/禁用用户接口
+    """
+    # 检查管理员权限
+    if current_user.role != "管理员":
+        raise HTTPException(status_code=403, detail="无权限访问")
+    
+    # 查找用户
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    
+    # 不允许禁用自己
+    if user.id == current_user.id:
+        raise HTTPException(status_code=400, detail="不能禁用自己的账号")
+    
+    # 更新状态
+    user.is_active = is_active
+    db.commit()
+    db.refresh(user)
+    
+    return {
+        "code": 200,
+        "message": "操作成功",
+        "data": {
+            "user_id": user.id,
+            "is_active": user.is_active
         }
-        
-    except Exception as e:
-        raise HTTPException(500, f"预览失败: {str(e)}")
+    }
+
+
+# 新增：设置管理员权限接口
+@app.put("/admin/user/{user_id}/role")
+async def update_user_role(
+    user_id: str,
+    is_admin: bool,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    【管理员】设置或取消用户管理员权限接口
+    """
+    # 检查管理员权限
+    if current_user.role != "管理员":
+        raise HTTPException(status_code=403, detail="无权限访问")
+    
+    # 查找用户
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    
+    # 不允许修改自己的权限
+    if user.id == current_user.id:
+        raise HTTPException(status_code=400, detail="不能修改自己的管理员权限")
+    
+    # 更新角色
+    user.role = "管理员" if is_admin else "普通用户"
+    db.commit()
+    db.refresh(user)
+    
+    return {
+        "code": 200,
+        "message": "操作成功",
+        "data": {
+            "user_id": user.id,
+            "role": user.role
+        }
+    }
+
+
+# 新增：删除用户接口
+@app.delete("/admin/user/{user_id}")
+async def delete_user(
+    user_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    【管理员】删除用户接口
+    """
+    # 检查管理员权限
+    if current_user.role != "管理员":
+        raise HTTPException(status_code=403, detail="无权限访问")
+    
+    # 查找用户
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    
+    # 不允许删除自己
+    if user.id == current_user.id:
+        raise HTTPException(status_code=400, detail="不能删除自己的账号")
+    
+    # 删除用户
+    db.delete(user)
+    db.commit()
+    
+    return {
+        "code": 200,
+        "message": "操作成功",
+        "data": {
+            "user_id": user_id
+        }
+    }
+
+
+# 新增：获取后台统计数据接口
+@app.get("/admin/statistics")
+async def get_admin_statistics(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    【管理员】获取后台统计数据接口
+    会自动清理超过15分钟没有心跳的在线用户
+    """
+    # 检查管理员权限
+    if current_user.role != "管理员":
+        raise HTTPException(status_code=403, detail="无权限访问")
+    
+    # 清理长时间未活动的在线用户（超过15分钟没有心跳）
+    timeout = datetime.now() - timedelta(minutes=15)
+    inactive_users = db.query(User).filter(
+        User.login_status == "在线",
+        User.last_activity_time < timeout
+    ).all()
+    
+    for user in inactive_users:
+        user.login_status = "离线"
+    
+    if inactive_users:
+        db.commit()
+        print(f"🧹 自动清理 {len(inactive_users)} 个超时未活动的用户")
+    
+    # 统计总用户数
+    total_users = db.query(User).count()
+    
+    # 统计在线用户数（15分钟内有活动的用户）
+    online_users = db.query(User).filter(
+        User.login_status == "在线",
+        User.last_activity_time >= timeout
+    ).count()
+    
+    # 统计正常用户数（活跃状态）
+    normal_users = db.query(User).filter(User.is_active == True).count()
+    
+    # 构建响应
+    statistics = {
+        "total_users": total_users,
+        "online_users": online_users,
+        "normal_users": normal_users
+    }
+    
+    return {
+        "code": 200,
+        "message": "操作成功",
+        "data": statistics
+    }

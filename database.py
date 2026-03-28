@@ -79,6 +79,13 @@ class User(Base):
     phone = Column(String, nullable=True)  # 手机号
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.now)
+    # 新增字段
+    role = Column(String, default="普通用户")  # 用户角色：管理员、普通用户
+    last_login_time = Column(DateTime, nullable=True)  # 最后登录时间
+    last_login_ip = Column(String, nullable=True)  # 最后登录IP
+    login_status = Column(String, default="离线")  # 登录状态：在线、离线
+    last_activity_time = Column(DateTime, nullable=True)  # 最后活动时间（用于心跳检测）
+    remark = Column(Text, nullable=True)  # 备注
 
 
 # ==================== 依赖项 ====================
@@ -156,6 +163,43 @@ def migrate_db():
         if "phone" not in columns:
             db.execute(text("ALTER TABLE users ADD COLUMN phone TEXT"))
             print("✅ 添加 phone 字段成功")
+        
+        # 新增字段
+        if "role" not in columns:
+            db.execute(text("ALTER TABLE users ADD COLUMN role TEXT DEFAULT '普通用户'"))
+            print("✅ 添加 role 字段成功")
+        
+        if "last_login_time" not in columns:
+            db.execute(text("ALTER TABLE users ADD COLUMN last_login_time DATETIME"))
+            print("✅ 添加 last_login_time 字段成功")
+        
+        if "last_login_ip" not in columns:
+            db.execute(text("ALTER TABLE users ADD COLUMN last_login_ip TEXT"))
+            print("✅ 添加 last_login_ip 字段成功")
+        
+        if "login_status" not in columns:
+            db.execute(text("ALTER TABLE users ADD COLUMN login_status TEXT DEFAULT '离线'"))
+            print("✅ 添加 login_status 字段成功")
+        
+        if "remark" not in columns:
+            db.execute(text("ALTER TABLE users ADD COLUMN remark TEXT"))
+            print("✅ 添加 remark 字段成功")
+        
+        if "last_activity_time" not in columns:
+            db.execute(text("ALTER TABLE users ADD COLUMN last_activity_time DATETIME"))
+            print("✅ 添加 last_activity_time 字段成功")
+        
+        # 将指定邮箱的用户设置为管理员
+        admin_emails = ["admin@example.com", "1234567890@qq.com"]
+        for email in admin_emails:
+            result = db.execute(
+                text("UPDATE users SET role = '管理员' WHERE email = :email"),
+                {"email": email}
+            )
+            if result.rowcount > 0:
+                print(f"✅ 将 {email} 设置为管理员")
+            else:
+                print(f"⚠️ 未找到邮箱为 {email} 的用户")
         
         db.commit()
         print("✅ 数据库迁移完成")
