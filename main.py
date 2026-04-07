@@ -25,7 +25,7 @@ from database import ExtractionRecord, User, get_db, init_db
 from services.auth import AuthService, get_current_user
 from services.db_service import DBService
 from services.llm_extractor import LLMExtractor
-from services.parser import DocumentParser
+from services.document_parser import DocumentParser
 from services.table_filler import TableFiller
 
 # 导入 ai_core engine 模块
@@ -412,7 +412,8 @@ async def get_user_profile(current_user: User = Depends(get_current_user)):
         "nickname": current_user.nickname,
         "gender": current_user.gender,
         "phone": current_user.phone,
-        "is_active": current_user.is_active,
+        "accountStatus": current_user.accountStatus,
+        "role": current_user.role,
     }
 
 
@@ -737,7 +738,7 @@ async def get_user_page(
         raise HTTPException(status_code=403, detail="无权限访问")
     
     # 清理长时间未活动的在线用户（超过15分钟没有心跳）
-    timeout = datetime.now() - timedelta(minutes=15)
+    timeout = datetime.now() - timedelta(hours=1)
     inactive_users = db.query(User).filter(
         User.login_status == "在线",
         User.last_activity_time < timeout
@@ -763,9 +764,9 @@ async def get_user_page(
     
     # 状态筛选
     if status == "active":
-        query = query.filter(User.is_active == True)
+        query = query.filter(User.accountStatus == "正常")
     elif status == "inactive":
-        query = query.filter(User.is_active == False)
+        query = query.filter(User.accountStatus == "异常")
     
     # 计算总数
     total = query.count()
@@ -785,7 +786,7 @@ async def get_user_page(
             "gender": user.gender,
             "phone": user.phone,
             "role": user.role,
-            "is_active": user.is_active,
+            "accountStatus": user.accountStatus,
             "login_status": user.login_status,
             "last_login_time": user.last_login_time.isoformat() if user.last_login_time else None,
             "last_activity_time": user.last_activity_time.isoformat() if user.last_activity_time else None,
@@ -833,7 +834,7 @@ async def get_user_detail(
         "gender": user.gender,
         "phone": user.phone,
         "role": user.role,
-        "is_active": user.is_active,
+        "accountStatus": user.accountStatus,
         "login_status": user.login_status,
         "last_login_time": user.last_login_time.isoformat() if user.last_login_time else None,
         "last_activity_time": user.last_activity_time.isoformat() if user.last_activity_time else None,
@@ -853,7 +854,7 @@ async def get_user_detail(
 @app.put("/admin/user/{user_id}/status")
 async def update_user_status(
     user_id: str,
-    is_active: bool,
+    accountStatus: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -864,17 +865,21 @@ async def update_user_status(
     if current_user.role != "管理员":
         raise HTTPException(status_code=403, detail="无权限访问")
     
+    # 验证状态值
+    if accountStatus not in ["正常", "异常"]:
+        raise HTTPException(status_code=400, detail="状态值必须是'正常'或'异常'")
+    
     # 查找用户
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
     
     # 不允许禁用自己
-    if user.id == current_user.id:
+    if user.id == current_user.id and accountStatus == "异常":
         raise HTTPException(status_code=400, detail="不能禁用自己的账号")
     
     # 更新状态
-    user.is_active = is_active
+    user.accountStatus = accountStatus
     db.commit()
     db.refresh(user)
     
@@ -883,7 +888,7 @@ async def update_user_status(
         "message": "操作成功",
         "data": {
             "user_id": user.id,
-            "is_active": user.is_active
+            "accountStatus": user.accountStatus
         }
     }
 
@@ -978,7 +983,7 @@ async def get_admin_statistics(
         raise HTTPException(status_code=403, detail="无权限访问")
     
     # 清理长时间未活动的在线用户（超过15分钟没有心跳）
-    timeout = datetime.now() - timedelta(minutes=15)
+    timeout = datetime.now() - timedelta(hours=1)
     inactive_users = db.query(User).filter(
         User.login_status == "在线",
         User.last_activity_time < timeout
@@ -1001,7 +1006,7 @@ async def get_admin_statistics(
     ).count()
     
     # 统计正常用户数（活跃状态）
-    normal_users = db.query(User).filter(User.is_active == True).count()
+    normal_users = db.query(User).filter(User.accountStatus == "正常").count()
     
     # 构建响应
     statistics = {

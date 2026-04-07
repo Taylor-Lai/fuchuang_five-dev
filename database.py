@@ -77,7 +77,7 @@ class User(Base):
     nickname = Column(String, nullable=True)  # 昵称
     gender = Column(String, nullable=True)  # 性别：男/女
     phone = Column(String, nullable=True)  # 手机号
-    is_active = Column(Boolean, default=True)
+    accountStatus = Column(String, default="正常")  # 账户状态：正常/异常
     created_at = Column(DateTime, default=datetime.now)
     # 新增字段
     role = Column(String, default="普通用户")  # 用户角色：管理员、普通用户
@@ -150,6 +150,130 @@ def migrate_db():
         # 检查是否已存在这些字段
         result = db.execute(text("PRAGMA table_info(users)"))
         columns = [column[1] for column in result.fetchall()]
+        
+        # 处理 accountStatus 字段
+        if "accountStatus" in columns:
+            # 检查是否需要从布尔值转换为字符串
+            # 获取字段类型
+            result = db.execute(text("PRAGMA table_info(users)"))
+            field_info = result.fetchall()
+            accountStatus_type = None
+            for field in field_info:
+                if field[1] == "accountStatus":
+                    accountStatus_type = field[2]
+                    break
+            
+            if accountStatus_type and "BOOLEAN" in accountStatus_type:
+                print("ℹ️  开始将 accountStatus 字段从布尔值转换为字符串...")
+                try:
+                    # 1. 创建临时表
+                    db.execute(text("""
+                        CREATE TABLE users_temp (
+                            id VARCHAR NOT NULL,
+                            username VARCHAR NOT NULL,
+                            email VARCHAR,
+                            hashed_password VARCHAR NOT NULL,
+                            nickname TEXT,
+                            gender TEXT,
+                            phone TEXT,
+                            accountStatus TEXT DEFAULT '正常',
+                            created_at DATETIME,
+                            role TEXT DEFAULT '普通用户',
+                            last_login_time DATETIME,
+                            last_login_ip TEXT,
+                            login_status TEXT DEFAULT '离线',
+                            last_activity_time DATETIME,
+                            remark TEXT,
+                            PRIMARY KEY (id)
+                        )
+                    """))
+                    
+                    # 2. 复制数据，将布尔值转换为字符串
+                    db.execute(text("""
+                        INSERT INTO users_temp 
+                        SELECT id, username, email, hashed_password, nickname, gender, phone, 
+                               CASE WHEN accountStatus = 1 THEN '正常' ELSE '异常' END, 
+                               created_at, role, last_login_time, last_login_ip, 
+                               login_status, last_activity_time, remark
+                        FROM users
+                    """))
+                    
+                    # 3. 删除旧表
+                    db.execute(text("DROP TABLE users"))
+                    
+                    # 4. 重命名临时表
+                    db.execute(text("ALTER TABLE users_temp RENAME TO users"))
+                    
+                    # 5. 重建索引
+                    db.execute(text("CREATE INDEX ix_users_id ON users (id)"))
+                    db.execute(text("CREATE UNIQUE INDEX ix_users_username ON users (username)"))
+                    db.execute(text("CREATE UNIQUE INDEX ix_users_email ON users (email)"))
+                    
+                    print("✅ 成功将 accountStatus 字段从布尔值转换为字符串")
+                    
+                    # 更新 columns 列表
+                    result = db.execute(text("PRAGMA table_info(users)"))
+                    columns = [column[1] for column in result.fetchall()]
+                except Exception as e:
+                    print(f"❌ 转换 accountStatus 字段失败：{str(e)}")
+                    db.rollback()
+                    raise
+        elif "is_active" in columns:
+            # 重命名 is_active 列为 accountStatus（SQLite 不支持直接重命名，需要重建表）
+            print("ℹ️  开始迁移 is_active 列为 accountStatus...")
+            try:
+                # 1. 创建临时表
+                db.execute(text("""
+                    CREATE TABLE users_temp (
+                        id VARCHAR NOT NULL,
+                        username VARCHAR NOT NULL,
+                        email VARCHAR,
+                        hashed_password VARCHAR NOT NULL,
+                        nickname TEXT,
+                        gender TEXT,
+                        phone TEXT,
+                        accountStatus TEXT DEFAULT '正常',
+                        created_at DATETIME,
+                        role TEXT DEFAULT '普通用户',
+                        last_login_time DATETIME,
+                        last_login_ip TEXT,
+                        login_status TEXT DEFAULT '离线',
+                        last_activity_time DATETIME,
+                        remark TEXT,
+                        PRIMARY KEY (id)
+                    )
+                """))
+                
+                # 2. 复制数据，将布尔值转换为字符串
+                db.execute(text("""
+                    INSERT INTO users_temp 
+                    SELECT id, username, email, hashed_password, nickname, gender, phone, 
+                           CASE WHEN is_active = 1 THEN '正常' ELSE '异常' END, 
+                           created_at, role, last_login_time, last_login_ip, 
+                           login_status, last_activity_time, remark
+                    FROM users
+                """))
+                
+                # 3. 删除旧表
+                db.execute(text("DROP TABLE users"))
+                
+                # 4. 重命名临时表
+                db.execute(text("ALTER TABLE users_temp RENAME TO users"))
+                
+                # 5. 重建索引
+                db.execute(text("CREATE INDEX ix_users_id ON users (id)"))
+                db.execute(text("CREATE UNIQUE INDEX ix_users_username ON users (username)"))
+                db.execute(text("CREATE UNIQUE INDEX ix_users_email ON users (email)"))
+                
+                print("✅ 成功将 is_active 列重命名为 accountStatus")
+                
+                # 更新 columns 列表
+                result = db.execute(text("PRAGMA table_info(users)"))
+                columns = [column[1] for column in result.fetchall()]
+            except Exception as e:
+                print(f"❌ 迁移 is_active 列失败：{str(e)}")
+                db.rollback()
+                raise
         
         # 如果字段不存在，添加它们
         if "nickname" not in columns:
