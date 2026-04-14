@@ -23,7 +23,7 @@ wheels/
 *.egg
 
 # ====================
-# 2. 虚拟环境（重要！）
+# 2. 虚拟环境
 # ====================
 venv/
 env/
@@ -33,23 +33,18 @@ ENV/
 .conda/
 
 # ====================
-# 3. 密钥和敏感配置（重要！）
+# 3. 密钥和敏感配置
 # ====================
 .env
-.env.local
-.env.production
-.env.example
+.env.*
 *.key
 *.pem
 *.crt
 secrets.json
 config.private.json
-*.db
-*.sqlite
-*.sqlite3
 
 # ====================
-# 4. IDE 配置
+# 4. IDE 和工具配置
 # ====================
 # VS Code
 .vscode/
@@ -57,14 +52,15 @@ config.private.json
 
 # PyCharm/IntelliJ
 .idea/
-
-# Claude Code
-.claude/
 *.iml
 *.ipr
 *.iws
 
-# 其他
+# Claude Code
+.claude/
+CLAUDE.md
+
+# 其他编辑器
 *.swp
 *.swo
 *~
@@ -87,13 +83,12 @@ Desktop.ini
 $RECYCLE.BIN/
 
 # Linux
-*~
 .fuse_hidden*
 
 # ====================
 # 6. 项目特定文件
 # ====================
-# 日志文件
+# 日志
 *.log
 logs/
 log/
@@ -103,12 +98,12 @@ tmp/
 temp/
 .tmp/
 
-# 上传的文件（如果有的话）
+# 上传文件
 uploads/
 upload/
 files/
 
-# 测试数据（如果包含敏感信息）
+# 测试数据
 test_data/
 testdata/
 
@@ -123,7 +118,6 @@ testdata/
 # ====================
 # 7. 竞赛特定（可选）
 # ====================
-# 如果有些文件只本地测试用
 local_test/
 backup/
 *.bak
