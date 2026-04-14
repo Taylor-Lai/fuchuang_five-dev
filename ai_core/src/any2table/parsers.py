@@ -147,10 +147,20 @@ class TextParser:
         return file.ext in self.supported_exts
 
     def parse(self, file: FileAsset) -> CanonicalDocument:
-        text = Path(file.path).read_text(encoding="utf-8")
+        file_path = Path(file.path)
+        text = None
+        for encoding in ("utf-8", "gbk", "utf-16"):
+            try:
+                text = file_path.read_text(encoding=encoding)
+                break
+            except (UnicodeDecodeError, UnicodeError):
+                continue
+        if text is None:
+            raise ValueError(f"无法识别文件编码: {file.path}")
+
         blocks = []
         text_index = []
-        
+
         # 按换行符分割文本，创建多个block
         lines = text.split('\n')
         current_paragraph = []

@@ -57,6 +57,9 @@ config.private.json
 
 # PyCharm/IntelliJ
 .idea/
+
+# Claude Code
+.claude/
 *.iml
 *.ipr
 *.iws

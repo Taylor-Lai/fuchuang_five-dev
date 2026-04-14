@@ -25,12 +25,34 @@ ZHIPU_API_KEY = os.getenv("ZHIPU_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # 导入相应的 LLM 客户端
+ChatZhipuAI = None
+ChatOpenAI = None
+
 if LLM_PROVIDER == "zhipu" and ZHIPU_API_KEY:
-    from langchain_community.chat_models import ChatZhipuAI
+    try:
+        from langchain_community.chat_models import ChatZhipuAI
+    except ImportError:
+        raise ImportError("使用 zhipu 需要安装 langchain-community: pip install langchain-community")
 elif OPENAI_API_KEY:
-    from langchain_openai import ChatOpenAI
+    try:
+        from langchain_openai import ChatOpenAI
+    except ImportError:
+        raise ImportError("使用 OpenAI 需要安装 langchain-openai: pip install langchain-openai")
 else:
     raise ValueError("请在 .env 文件中配置 ZHIPU_API_KEY 或 OPENAI_API_KEY")
+
+# 模块级 LLM 单例
+_llm_instance = None
+
+
+def _get_llm():
+    global _llm_instance
+    if _llm_instance is None:
+        if LLM_PROVIDER == "zhipu" and ZHIPU_API_KEY:
+            _llm_instance = ChatZhipuAI(model="glm-4", api_key=ZHIPU_API_KEY, temperature=0)
+        else:
+            _llm_instance = ChatOpenAI(model="gpt-4o-mini", temperature=0, api_key=OPENAI_API_KEY)
+    return _llm_instance
 
 
 class FormatAction(BaseModel):
@@ -48,15 +70,14 @@ class FormatPlan(BaseModel):
 def handle_module_1_format(input_data: Mod1_FormatInput) -> Mod1_FormatOutput:
     try:
         doc_path = Path(input_data.file_path)
+        if not doc_path.exists():
+            return Mod1_FormatOutput(status="failed", message=f"文件不存在: {doc_path}")
         doc = Document(doc_path)
 
         preview_text = "\n".join([f"[{i}] {p.text}" for i, p in enumerate(doc.paragraphs[:10]) if p.text.strip()])
 
         # 初始化 LLM 客户端
-        if LLM_PROVIDER == "zhipu" and ZHIPU_API_KEY:
-            llm = ChatZhipuAI(model="glm-4", api_key=ZHIPU_API_KEY, temperature=0)
-        else:
-            llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, api_key=OPENAI_API_KEY)
+        llm = _get_llm()
         structured_llm = llm.with_structured_output(FormatPlan)
 
         prompt = ChatPromptTemplate.from_messages([
@@ -115,6 +136,8 @@ def handle_module_2_extract(input_data: Mod2_ExtractInput) -> Mod2_ExtractOutput
     try:
         # 1. 读取文件文本
         file_path = input_data.file_path
+        if not Path(file_path).exists():
+            return Mod2_ExtractOutput(status="failed", message=f"文件不存在: {file_path}")
         if file_path.endswith('.docx'):
             doc = Document(file_path)
             full_text = "\n".join([p.text for p in doc.paragraphs if p.text.strip()])
@@ -142,10 +165,7 @@ def handle_module_2_extract(input_data: Mod2_ExtractInput) -> Mod2_ExtractOutput
         DynamicExtractionModel = create_model('DynamicExtractionModel', **fields_spec)
 
         # 初始化 LLM 客户端
-        if LLM_PROVIDER == "zhipu" and ZHIPU_API_KEY:
-            llm = ChatZhipuAI(model="glm-4", api_key=ZHIPU_API_KEY, temperature=0)
-        else:
-            llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, api_key=OPENAI_API_KEY)
+        llm = _get_llm()
         structured_llm = llm.with_structured_output(DynamicExtractionModel)
 
         prompt = ChatPromptTemplate.from_messages([
