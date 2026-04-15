@@ -19,7 +19,7 @@ class AppConfig:
 
     retrieval_backend: str = "rule"
     router_backend: str = "default"
-    rag_backend: str = "default"
+    rag_backend: str = "hybrid"
     extractor_backend: str = "default"
     verifier_backend: str = "default"
     writer_backend: Literal["auto", "xlsx", "docx"] = "auto"

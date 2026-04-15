@@ -17,6 +17,8 @@ from any2table.core.models import EvidencePack, StructuredRecord, TaskSpec, Temp
 
 
 TEMPORAL_FIELD_TOKENS = ("日期", "时间", "时刻", "监测时间", "date", "time")
+
+# COVID schema 兼容常量 — 仅用于 _extract_covid_country_record 回退
 COVID_COUNTRY_FIELDS = {"国家/地区", "大洲", "人均GDP", "人口", "每日检测数", "病例数"}
 PROVINCE_NAME_PATTERN = re.compile(r"^[\u4e00-\u9fff]{2,12}(?:省|自治区|直辖市|兵团)$")
 TITLE_DATE_PATTERN = re.compile(r"(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日")
@@ -25,13 +27,6 @@ POPULATION_PATTERN = re.compile(r"(?:常住人口|人口)(?:约)?\s*(\d+(?:\.\d+
 PER_GDP_PATTERN = re.compile(r"人均\s*GDP[^\d]{0,6}(\d+(?:\.\d+)?)\s*万?元")
 TEST_PATTERN = re.compile(r"(?:核酸)?检测量[^\d]{0,8}(\d+(?:\.\d+)?)\s*(亿|万|份)")
 ADD_CASES_PATTERN = re.compile(r"新增[^\d]{0,6}(\d+)\s*例")
-ECON_PARAGRAPH_PATTERN = re.compile(
-    r"(?P<city>[\u4e00-\u9fff]{2,6}(?:市|州|地区)?)"
-    r".*?(?P<gdp>\d[\d,]*\.?\d*)\s*亿元"
-    r".*?(?P<pop>\d[\d,]*\.?\d*)\s*万"
-    r".*?人均\s*GDP[^\d]*(?P<per_gdp>\d[\d,]*\.?\d*)\s*元"
-    r".*?一般公共预算收入[^\d]*(?P<budget>\d[\d,]*\.?\d*)\s*亿元"
-)
 
 
 def _normalize(value: str) -> str:
@@ -393,38 +388,96 @@ def _candidate_to_record(target_table, record_index: int, candidate: dict[str, o
     )
 
 
+def _fuzzy_match_field(
+    source_key: str,
+    normalized_field_map: dict[str, str],
+    already_mapped: set[str],
+) -> str | None:
+    """两级模糊匹配：子串包含（长度差≤4）→ Bigram Jaccard ≥ 0.5。
+
+    返回最佳匹配的目标字段名，或 None。
+    already_mapped 里的字段不参与匹配，防止多列映射到同一目标字段。
+    """
+    source_norm = _normalize(source_key)
+    remaining = {k: v for k, v in normalized_field_map.items() if v not in already_mapped}
+
+    # 第一级：子串包含（限制长度差≤4字符，防止"人口密度"误匹配"人口"）
+    for field_norm, field_name in remaining.items():
+        len_diff = abs(len(source_norm) - len(field_norm))
+        if len_diff <= 4 and (source_norm in field_norm or field_norm in source_norm):
+            return field_name
+
+    # 第二级：Bigram Jaccard 相似度
+    def bigrams(s: str) -> set[str]:
+        return {s[i:i + 2] for i in range(len(s) - 1)} if len(s) >= 2 else {s}
+
+    best_score, best_field = 0.0, None
+    src_bg = bigrams(source_norm)
+    for field_norm, field_name in remaining.items():
+        fld_bg = bigrams(field_norm)
+        union = src_bg | fld_bg
+        if union:
+            score = len(src_bg & fld_bg) / len(union)
+            if score > best_score:
+                best_score, best_field = score, field_name
+    return best_field if best_score >= 0.5 else None
+
+
 def _extract_records_from_row_evidence(target_table, task_spec: TaskSpec, evidence_pack: EvidencePack) -> list[StructuredRecord]:
+    """从表格行证据中提取记录，支持精确列名匹配和模糊列名匹配。"""
     target_fields = {field.field_name: field for field in target_table.schema}
     normalized_field_map = {_normalize(field.field_name): field.field_name for field in target_table.schema}
     filters = _extract_filter_context(target_table, task_spec, evidence_pack)
     candidates: list[dict[str, object]] = []
+
     for item in evidence_pack.items:
         if item.evidence_type != "row" or not isinstance(item.content, dict):
             continue
         raw_row = item.content
         if not _row_matches_filters(raw_row, filters):
             continue
+
         values: dict[str, object] = {}
         field_sources: dict[str, list[str]] = {}
+        already_mapped: set[str] = set()
+        match_notes: list[str] = []
         matched = 0
+        fuzzy_matched = 0
+
         for key, value in raw_row.items():
             normalized_key = _normalize(key)
+            # 精确匹配
             if normalized_key in normalized_field_map:
                 field_name = normalized_field_map[normalized_key]
-                values[field_name] = value
-                field_sources[field_name] = [item.evidence_id]
+                if field_name not in already_mapped:
+                    values[field_name] = value
+                    field_sources[field_name] = [item.evidence_id]
+                    already_mapped.add(field_name)
+                    matched += 1
+                continue
+            # 模糊匹配（仅对还未映射的目标字段）
+            fuzzy_field = _fuzzy_match_field(key, normalized_field_map, already_mapped)
+            if fuzzy_field:
+                values[fuzzy_field] = value
+                field_sources[fuzzy_field] = [item.evidence_id]
+                already_mapped.add(fuzzy_field)
+                match_notes.append(f"fuzzy: '{key}'->'{fuzzy_field}'")
                 matched += 1
+                fuzzy_matched += 1
+
         if matched:
             for field_name in target_fields:
                 values.setdefault(field_name, None)
+            # 模糊匹配降低置信度
+            confidence = 0.65 if fuzzy_matched else 0.7
             candidates.append(
                 {
                     "values": values,
                     "field_sources": field_sources,
                     "temporal_value": _extract_row_temporal_value(raw_row),
                     "evidence_id": item.evidence_id,
-                    "confidence": 0.7,
-                    "notes": [],
+                    "confidence": confidence,
+                    "notes": match_notes,
                 }
             )
 
@@ -432,13 +485,7 @@ def _extract_records_from_row_evidence(target_table, task_spec: TaskSpec, eviden
     return [_candidate_to_record(target_table, index, candidate) for index, candidate in enumerate(resolved_candidates)]
 
 
-def _clean_city_name(value: str) -> str:
-    value = value.strip()
-    for suffix in ("以", "凭", "在", "达"):
-        if value.endswith(suffix) and len(value) > 2:
-            return value[:-1]
-    return value
-
+# ── COVID 回退（保留用于向后兼容）──────────────────────────────────────────────
 
 def _convert_unit_number(number_text: str, unit: str) -> int:
     value = float(number_text)
@@ -496,6 +543,7 @@ def _apply_paragraph_temporal_policy(target_table, task_spec: TaskSpec, values: 
 
 
 def _extract_covid_country_record(target_table, task_spec: TaskSpec, evidence_pack: EvidencePack) -> list[StructuredRecord]:
+    """COVID 国家级记录提取（legacy 兼容回退，仅在 schema 完全匹配时调用）。"""
     field_names = {field.field_name for field in target_table.schema}
     if not COVID_COUNTRY_FIELDS.issubset(field_names):
         return []
@@ -605,327 +653,103 @@ def _extract_covid_country_record(target_table, task_spec: TaskSpec, evidence_pa
     ]
 
 
-def _extract_records_from_econ_paragraphs(target_table, evidence_pack: EvidencePack) -> list[StructuredRecord]:
-    field_names = [field.field_name for field in target_table.schema]
-    normalized_fields = [_normalize(name) for name in field_names]
-    city_field = next((name for name in field_names if "城市" in name), field_names[0] if field_names else None)
-    gdp_field = next((name for name in field_names if "gdp总量" in _normalize(name)), None)
-    pop_field = next((name for name in field_names if "常住人口" in name), None)
-    per_gdp_field = next((name for name in field_names if "人均gdp" in _normalize(name)), None)
-    budget_field = next((name for name in field_names if "一般公共预算收入" in name), None)
-    if not all([city_field, gdp_field, pop_field, per_gdp_field, budget_field]):
-        return []
+# ── 通用段落提取 ───────────────────────────────────────────────────────────────
 
-    records: list[StructuredRecord] = []
-    for item in evidence_pack.items:
-        if item.evidence_type != "paragraph" or not isinstance(item.content, str):
-            continue
-        if not any("gdp" in nf for nf in normalized_fields):
-            continue
-        match = ECON_PARAGRAPH_PATTERN.search(item.content)
-        if not match:
-            continue
-        values = {
-            city_field: _clean_city_name(match.group("city")),
-            gdp_field: match.group("gdp"),
-            pop_field: match.group("pop"),
-            per_gdp_field: match.group("per_gdp"),
-            budget_field: match.group("budget"),
-        }
-        records.append(
-            StructuredRecord(
-                record_id=f"{target_table.target_table_id}#paragraph-{len(records)}",
-                target_table_id=target_table.target_table_id,
-                values=values,
-                field_sources={field: [item.evidence_id] for field in values},
-                confidence=0.8,
-                status="ready",
-            )
+def _extract_kv_from_paragraph(text: str, target_fields: list[str]) -> dict[str, object]:
+    """在段落文本中查找"字段名：值"/"字段名: 值"显式 KV 标注。"""
+    result: dict[str, object] = {}
+    for field_name in target_fields:
+        pattern = re.compile(
+            rf"{re.escape(field_name)}\s*[：:]\s*([^\s，,；;。\n]+)",
+            re.UNICODE,
         )
-    return records
+        match = pattern.search(text)
+        if match:
+            result[field_name] = match.group(1).strip()
+    return result
 
 
-def _extract_air_quality_records(target_table, evidence_pack: EvidencePack) -> list[StructuredRecord]:
-    field_names = [field.field_name for field in target_table.schema]
-    city_field = next((name for name in field_names if "城市" in name), None)
-    pm25_field = next((name for name in field_names if "PM2.5" in name), None)
-    pm10_field = next((name for name in field_names if "PM10" in name), None)
-    so2_field = next((name for name in field_names if "SO2" in name), None)
-    no2_field = next((name for name in field_names if "NO2" in name), None)
-    co_field = next((name for name in field_names if "CO" in name), None)
-    o3_field = next((name for name in field_names if "O3" in name), None)
-    
-    if not city_field or not any([pm25_field, pm10_field, so2_field, no2_field, co_field, o3_field]):
-        return []
-    
-    city_pattern = re.compile(r"(\w+?)：")
-    pm25_pattern = re.compile(r"- PM2\.5：(\d+)")
-    pm10_pattern = re.compile(r"- PM10：(\d+)")
-    so2_pattern = re.compile(r"- SO2：(\d+)")
-    no2_pattern = re.compile(r"- NO2：(\d+)")
-    co_pattern = re.compile(r"- CO：(\d+\.\d+)")
-    o3_pattern = re.compile(r"- O3：(\d+)")
-    
-    records: list[StructuredRecord] = []
-    current_city = None
-    current_data = {}
-    current_evidence_id = None
-    
-    for item in evidence_pack.items:
-        if item.evidence_type != "paragraph" or not isinstance(item.content, str):
-            continue
-        
-        text = item.content
-        city_match = city_pattern.search(text)
-        if city_match:
-            if current_city and current_data:
-                values = {city_field: current_city}
-                if pm25_field and "pm25" in current_data:
-                    values[pm25_field] = current_data["pm25"]
-                if pm10_field and "pm10" in current_data:
-                    values[pm10_field] = current_data["pm10"]
-                if so2_field and "so2" in current_data:
-                    values[so2_field] = current_data["so2"]
-                if no2_field and "no2" in current_data:
-                    values[no2_field] = current_data["no2"]
-                if co_field and "co" in current_data:
-                    values[co_field] = current_data["co"]
-                if o3_field and "o3" in current_data:
-                    values[o3_field] = current_data["o3"]
-                
-                records.append(
-                    StructuredRecord(
-                        record_id=f"{target_table.target_table_id}#air-quality-{len(records)}",
-                        target_table_id=target_table.target_table_id,
-                        values=values,
-                        field_sources={field: [current_evidence_id] for field in values},
-                        confidence=0.8,
-                        status="ready",
-                    )
-                )
-            
-            current_city = city_match.group(1)
-            current_data = {}
-            current_evidence_id = item.evidence_id
-        
-        pm25_match = pm25_pattern.search(text)
-        if pm25_match:
-            current_data["pm25"] = int(pm25_match.group(1))
-        
-        pm10_match = pm10_pattern.search(text)
-        if pm10_match:
-            current_data["pm10"] = int(pm10_match.group(1))
-        
-        so2_match = so2_pattern.search(text)
-        if so2_match:
-            current_data["so2"] = int(so2_match.group(1))
-        
-        no2_match = no2_pattern.search(text)
-        if no2_match:
-            current_data["no2"] = int(no2_match.group(1))
-        
-        co_match = co_pattern.search(text)
-        if co_match:
-            current_data["co"] = float(co_match.group(1))
-        
-        o3_match = o3_pattern.search(text)
-        if o3_match:
-            current_data["o3"] = int(o3_match.group(1))
-    
-    if current_city and current_data:
-        values = {city_field: current_city}
-        if pm25_field and "pm25" in current_data:
-            values[pm25_field] = current_data["pm25"]
-        if pm10_field and "pm10" in current_data:
-            values[pm10_field] = current_data["pm10"]
-        if so2_field and "so2" in current_data:
-            values[so2_field] = current_data["so2"]
-        if no2_field and "no2" in current_data:
-            values[no2_field] = current_data["no2"]
-        if co_field and "co" in current_data:
-            values[co_field] = current_data["co"]
-        if o3_field and "o3" in current_data:
-            values[o3_field] = current_data["o3"]
-        
-        records.append(
-            StructuredRecord(
-                record_id=f"{target_table.target_table_id}#air-quality-{len(records)}",
-                target_table_id=target_table.target_table_id,
-                values=values,
-                field_sources={field: [current_evidence_id] for field in values},
-                confidence=0.8,
-                status="ready",
-            )
-        )
-    
-    return records
+def _extract_nearby_number(text: str, field_name: str) -> object | None:
+    """字段名出现在文本中时，提取其后 15 字符内的第一个数字。"""
+    pattern = re.compile(
+        rf"{re.escape(field_name)}.{{0,15}}?(\d[\d,]*\.?\d*)",
+        re.UNICODE,
+    )
+    match = pattern.search(text)
+    if not match:
+        return None
+    raw = match.group(1).replace(",", "")
+    try:
+        return int(raw) if "." not in raw else float(raw)
+    except ValueError:
+        return raw
 
-def _extract_student_records(target_table, evidence_pack: EvidencePack) -> list[StructuredRecord]:
-    field_names = [field.field_name for field in target_table.schema]
-    name_field = next((name for name in field_names if "学生姓名" in name or "姓名" in name), None)
-    teacher_field = next((name for name in field_names if "指导教师" in name or "教师" in name), None)
-    student_id_field = next((name for name in field_names if "学号" in name), None)
-    course_field = next((name for name in field_names if "课程名称" in name or "课程" in name), None)
-    
-    if not name_field:
-        return []
-    
-    import re
-    # 支持带冒号和不带冒号的格式，以及更多字段名称变体
-    student_pattern = re.compile(r"学生姓名[:：]?\s*(.*?)\s*指导教师[:：]?\s*(.*?)\s*学号[:：]?\s*(.*?)\s*课程名称[:：]?\s*(.*?)(?:$|\n)", re.DOTALL)
-    name_pattern = re.compile(r"^\s*(?:学生姓名|姓名|学生)[:：]?\s*(.*?)\s*$")
-    teacher_pattern = re.compile(r"^\s*(?:指导教师|教师|老师)[:：]?\s*(.*?)\s*$")
-    id_pattern = re.compile(r"^\s*(?:学号|ID|id)[:：]?\s*(.*?)\s*$")
-    course_pattern = re.compile(r"^\s*(?:课程名称|课程|课)[:：]?\s*(.*?)\s*$")
-    
-    # 过滤掉无效值的关键词
-    invalid_values = ["签字", "签名", "日期", "时间", "地点", "备注"]
-    
-    # 跨段落收集学生信息
-    student_info = {}
-    evidence_ids = {}
-    source_lines = []
-    
-    for item in evidence_pack.items:
-        if item.evidence_type != "paragraph" or not isinstance(item.content, str):
-            continue
-        
-        text = item.content
-        # 收集所有行
-        lines = [line.strip() for line in text.split('\n') if line.strip()]
-        source_lines.extend(lines)
-        
-        # 尝试匹配完整的学生信息
-        matches = student_pattern.findall(text)
-        for match in matches:
-            name, teacher, student_id, course = match
-            values = {}
-            
-            # 过滤无效值
-            if name.strip() and not any(invalid in name for invalid in invalid_values):
-                values[name_field] = name.strip()
-            if teacher_field and teacher.strip() and not any(invalid in teacher for invalid in invalid_values):
-                values[teacher_field] = teacher.strip()
-            if student_id_field and student_id.strip() and not any(invalid in student_id for invalid in invalid_values):
-                values[student_id_field] = student_id.strip()
-            if course_field and course.strip() and not any(invalid in course for invalid in invalid_values):
-                values[course_field] = course.strip()
-            
-            if values:
-                return [
-                    StructuredRecord(
-                        record_id=f"{target_table.target_table_id}#student-0",
-                        target_table_id=target_table.target_table_id,
-                        values=values,
-                        field_sources={field: [item.evidence_id] for field in values},
-                        confidence=0.8,
-                        status="ready",
-                    )
-                ]
-        
-        # 尝试匹配单独的字段（逐行匹配）
-        for line in lines:
-            # 跳过包含无效关键词的行
-            if any(invalid in line for invalid in invalid_values):
-                continue
-            
-            name_match = name_pattern.match(line)
-            if name_match:
-                name_value = name_match.group(1).strip()
-                if name_value and not any(invalid in name_value for invalid in invalid_values):
-                    student_info[name_field] = name_value
-                    evidence_ids[name_field] = item.evidence_id
-                continue
-            
-            teacher_match = teacher_pattern.match(line)
-            if teacher_match and teacher_field:
-                teacher_value = teacher_match.group(1).strip()
-                if teacher_value and not any(invalid in teacher_value for invalid in invalid_values):
-                    student_info[teacher_field] = teacher_value
-                    evidence_ids[teacher_field] = item.evidence_id
-                continue
-            
-            id_match = id_pattern.match(line)
-            if id_match and student_id_field:
-                id_value = id_match.group(1).strip()
-                if id_value and not any(invalid in id_value for invalid in invalid_values):
-                    student_info[student_id_field] = id_value
-                    evidence_ids[student_id_field] = item.evidence_id
-                continue
-            
-            course_match = course_pattern.match(line)
-            if course_match and course_field:
-                course_value = course_match.group(1).strip()
-                if course_value and not any(invalid in course_value for invalid in invalid_values):
-                    student_info[course_field] = course_value
-                    evidence_ids[course_field] = item.evidence_id
-                continue
-    
-    # 检查是否成功提取了所有字段
-    if student_info and len(student_info) >= 2:
-        field_sources = {field: [evidence_ids.get(field, evidence_pack.items[0].evidence_id)] for field in student_info}
-        return [
-            StructuredRecord(
-                record_id=f"{target_table.target_table_id}#student-0",
-                target_table_id=target_table.target_table_id,
-                values=student_info,
-                field_sources=field_sources,
-                confidence=0.7,
-                status="ready",
-            )
-        ]
-    
-    # 尝试处理没有字段名称的情况，根据表头顺序匹配数据
-    if len(source_lines) >= 4:
-        values = {}
-        # 过滤无效值
-        if name_field and source_lines[0] and not any(invalid in source_lines[0] for invalid in invalid_values):
-            values[name_field] = source_lines[0]
-        if teacher_field and source_lines[1] and not any(invalid in source_lines[1] for invalid in invalid_values):
-            values[teacher_field] = source_lines[1]
-        if student_id_field and source_lines[2] and not any(invalid in source_lines[2] for invalid in invalid_values):
-            values[student_id_field] = source_lines[2]
-        if course_field and source_lines[3] and not any(invalid in source_lines[3] for invalid in invalid_values):
-            values[course_field] = source_lines[3]
-        
-        if values:
-            field_sources = {field: [evidence_pack.items[0].evidence_id] for field in values}
-            return [
-                StructuredRecord(
-                    record_id=f"{target_table.target_table_id}#student-0",
-                    target_table_id=target_table.target_table_id,
-                    values=values,
-                    field_sources=field_sources,
-                    confidence=0.6,
-                    status="ready",
-                )
-            ]
-    
-    # 尝试处理只有学生姓名的情况
-    elif len(source_lines) == 1 and name_field:
-        name_value = source_lines[0]
-        if name_value and not any(invalid in name_value for invalid in invalid_values):
-            values = {name_field: name_value}
-            field_sources = {name_field: [evidence_pack.items[0].evidence_id]}
-            return [
-                StructuredRecord(
-                    record_id=f"{target_table.target_table_id}#student-0",
-                    target_table_id=target_table.target_table_id,
-                    values=values,
-                    field_sources=field_sources,
-                    confidence=0.5,
-                    status="ready",
-                )
-            ]
-    
-    return []
 
 def _extract_records_from_paragraph_evidence(target_table, task_spec: TaskSpec, evidence_pack: EvidencePack) -> list[StructuredRecord]:
-    covid_records = _extract_covid_country_record(target_table, task_spec, evidence_pack)
-    econ_records = _extract_records_from_econ_paragraphs(target_table, evidence_pack)
-    air_quality_records = _extract_air_quality_records(target_table, evidence_pack)
-    student_records = _extract_student_records(target_table, evidence_pack)
-    return [*covid_records, *econ_records, *air_quality_records, *student_records]
+    """通用段落提取：KV 模式匹配 + 近邻数字提取，对任意领域数据均有效。
+
+    若通用提取无结果且 schema 匹配 COVID 特征，回退到 _extract_covid_country_record
+    以保持已有测试的向后兼容性。
+    """
+    # COVID 优先路径：schema 精确匹配时使用领域专用提取，保证已有测试不退化
+    field_names = {f.field_name for f in target_table.schema}
+    if COVID_COUNTRY_FIELDS.issubset(field_names):
+        return _extract_covid_country_record(target_table, task_spec, evidence_pack)
+
+    target_fields = [f.field_name for f in target_table.schema]
+    para_items = [
+        item for item in evidence_pack.items
+        if item.evidence_type == "paragraph" and isinstance(item.content, str)
+    ]
+    if not para_items:
+        return []
+
+    accumulated: dict[str, object] = {}
+    field_sources: dict[str, list[str]] = {}
+
+    for item in para_items:
+        text = item.content.strip()
+        if not text:
+            continue
+        # 第一阶段：显式 KV 格式提取
+        for fn, val in _extract_kv_from_paragraph(text, target_fields).items():
+            if fn not in accumulated:
+                accumulated[fn] = val
+                field_sources.setdefault(fn, []).append(item.evidence_id)
+        # 第二阶段：近邻数字提取（仅针对还未匹配的字段）
+        for fn in target_fields:
+            if fn in accumulated or fn not in text:
+                continue
+            val = _extract_nearby_number(text, fn)
+            if val is not None:
+                accumulated[fn] = val
+                field_sources.setdefault(fn, []).append(item.evidence_id)
+
+    if accumulated:
+        values = {f: accumulated.get(f) for f in target_fields}
+        temporal_value: date | None = None
+        for item in para_items[:3]:
+            temporal_value = _parse_date_value(item.content[:50])
+            if temporal_value:
+                break
+        values, notes = _apply_paragraph_temporal_policy(
+            target_table, task_spec, values, temporal_value,
+            notes=["Generic paragraph KV extraction."],
+        )
+        status = "partial" if any(v is None for v in values.values()) else "ready"
+        return [
+            StructuredRecord(
+                record_id=f"{target_table.target_table_id}#paragraph-generic-0",
+                target_table_id=target_table.target_table_id,
+                values=values,
+                field_sources={fn: list(ev) for fn, ev in field_sources.items()},
+                confidence=0.6,
+                status=status,
+                notes=notes,
+            )
+        ]
+
+    return []
 
 
 class DefaultExtractor:

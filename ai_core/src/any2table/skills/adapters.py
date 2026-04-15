@@ -21,3 +21,17 @@ def parse_skill_json(text: str) -> dict[str, object]:
     if not isinstance(parsed, dict):
         raise ValueError("Skill output must be a JSON object.")
     return parsed
+
+
+def validate_structuring_skill_output(result: dict) -> tuple[bool, str]:
+    """Validate paragraph-structuring and table-row-extraction skill output structure."""
+    if "records" not in result:
+        return False, "Skill output missing 'records' field"
+    if not isinstance(result["records"], list):
+        return False, f"'records' must be a list, got {type(result['records']).__name__}"
+    for i, record in enumerate(result["records"]):
+        if not isinstance(record, dict):
+            return False, f"records[{i}] must be a dict"
+        if "values" not in record or not isinstance(record["values"], dict):
+            return False, f"records[{i}] missing 'values' dict"
+    return True, ""

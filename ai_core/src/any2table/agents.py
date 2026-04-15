@@ -15,11 +15,13 @@ from any2table.core.models import VerificationCheck
 from any2table.core.runtime import AgentState
 from any2table.indexing.build_units import build_retrieval_units
 from any2table.merging import merge_candidates
+from any2table.skills.adapters import validate_structuring_skill_output
 from any2table.skills.executor import execute_skill
 from any2table.skills.renderer import render_skill_prompt
 
 MAX_PARAGRAPH_COUNT = 48
 MAX_PARAGRAPH_CHARS = 12000
+MAX_TABLE_ROWS = 200
 
 
 def _source_doc_summaries(state: AgentState) -> list[dict[str, object]]:
@@ -163,11 +165,57 @@ def _paragraph_blocks_for_skill(source_doc) -> list[dict[str, object]]:
     return blocks
 
 
-def _build_paragraph_skill_inputs(state: AgentState, source_doc) -> dict[str, object]:
+def _table_blocks_for_skill(source_doc) -> list[dict[str, object]]:
+    """将 xlsx/表格型文档的每一行转成文本块供 LLM Skill 处理。"""
+    blocks: list[dict[str, object]] = []
+    total_chars = 0
+    for table in source_doc.tables:
+        headers = [h.name for h in table.headers]
+        for row in table.rows:
+            if not headers:
+                continue
+            cells = [str(c.value) if c.value is not None else "" for c in row.cells]
+            text = " | ".join(f"{h}: {v}" for h, v in zip(headers, cells) if v)
+            if not text:
+                continue
+            if len(blocks) >= MAX_PARAGRAPH_COUNT:
+                break
+            if blocks and total_chars + len(text) > MAX_PARAGRAPH_CHARS:
+                break
+            blocks.append({"block_id": row.row_id, "text": text})
+            total_chars += len(text)
+        if len(blocks) >= MAX_PARAGRAPH_COUNT:
+            break
+    return blocks
+
+
+def _build_table_skill_inputs(state: AgentState, source_doc) -> dict[str, object]:
     template_fields = []
     if state.template_spec is not None:
         for target_table in state.template_spec.target_tables:
             template_fields.extend(field.field_name for field in target_table.schema)
+
+    tables_payload = []
+    total_rows = 0
+    for table in source_doc.tables:
+        headers = [h.name for h in table.headers]
+        if not headers:
+            continue
+        rows_payload = []
+        for row in table.rows:
+            if total_rows >= MAX_TABLE_ROWS:
+                break
+            rows_payload.append({h: c.value for h, c in zip(headers, row.cells)})
+            total_rows += 1
+        tables_payload.append({
+            "table_id": table.table_id,
+            "name": table.name or "",
+            "headers": headers,
+            "rows": rows_payload,
+        })
+        if total_rows >= MAX_TABLE_ROWS:
+            break
+
     return {
         "user_request_doc": state.user_request_doc.to_dict() if state.user_request_doc else {},
         "task_spec": state.task_spec.to_dict() if state.task_spec else {},
@@ -177,9 +225,34 @@ def _build_paragraph_skill_inputs(state: AgentState, source_doc) -> dict[str, ob
             "name": source_doc.file.name,
             "doc_type": source_doc.doc_type,
             "metadata": source_doc.metadata,
-            "paragraph_count": len(source_doc.blocks),
+            "table_count": len(tables_payload),
+            "truncated": total_rows >= MAX_TABLE_ROWS,
         },
-        "paragraphs": _paragraph_blocks_for_skill(source_doc),
+        "tables": tables_payload,
+    }
+
+
+def _build_paragraph_skill_inputs(state: AgentState, source_doc) -> dict[str, object]:
+    template_fields = []
+    if state.template_spec is not None:
+        for target_table in state.template_spec.target_tables:
+            template_fields.extend(field.field_name for field in target_table.schema)
+    if source_doc.blocks:
+        paragraphs = _paragraph_blocks_for_skill(source_doc)
+    else:
+        paragraphs = _table_blocks_for_skill(source_doc)
+    return {
+        "user_request_doc": state.user_request_doc.to_dict() if state.user_request_doc else {},
+        "task_spec": state.task_spec.to_dict() if state.task_spec else {},
+        "template_fields": template_fields,
+        "source_document": {
+            "doc_id": source_doc.doc_id,
+            "name": source_doc.file.name,
+            "doc_type": source_doc.doc_type,
+            "metadata": source_doc.metadata,
+            "paragraph_count": len(paragraphs),
+        },
+        "paragraphs": paragraphs,
     }
 
 
@@ -337,8 +410,6 @@ class RouterAgent:
     def run(self, state: AgentState) -> AgentState:
         use_rag, reason = _should_use_rag(state)
 
-        # Only activate RAG if rag_backend is not "default" (no-op).
-        # This allows gradual opt-in: set rag_backend="hybrid" in AppConfig to enable.
         if use_rag and self.registry.config.rag_backend != "default":
             route = "rag"
             confidence = 0.8
@@ -488,21 +559,43 @@ class CoderAgent:
 
         agent_candidates = []
         for source_doc in state.source_docs:
-            if source_doc.file.ext != "docx" or not source_doc.blocks:
+            if not source_doc.blocks and not source_doc.tables:
                 continue
-            skill_inputs = _build_paragraph_skill_inputs(state, source_doc)
-            if not skill_inputs["paragraphs"]:
+
+            if source_doc.blocks:
+                skill_name = "any2table-paragraph-structuring"
+                skill_inputs = _build_paragraph_skill_inputs(state, source_doc)
+                content_key = "paragraphs"
+                mode = "paragraph_extraction"
+            else:
+                skill_name = "any2table-table-row-extraction"
+                skill_inputs = _build_table_skill_inputs(state, source_doc)
+                content_key = "tables"
+                mode = "table_extraction"
+
+            if not skill_inputs.get(content_key):
                 continue
+
             skill_result = _run_skill(
                 self.registry,
                 state,
                 agent_name="coder_agent",
-                skill_name="any2table-paragraph-structuring",
-                mode="paragraph_extraction",
+                skill_name=skill_name,
+                mode=mode,
                 inputs=skill_inputs,
             )
             if not skill_result:
                 continue
+
+            valid, error_msg = validate_structuring_skill_output(skill_result)
+            if not valid:
+                state.add_log("coder_agent", "skill_output_invalid", {
+                    "source_doc_id": source_doc.doc_id,
+                    "skill": skill_name,
+                    "error": error_msg,
+                })
+                continue
+
             doc_candidates = build_agent_candidates_from_skill_result(
                 task_spec=state.task_spec,
                 template_spec=state.template_spec,
@@ -512,10 +605,11 @@ class CoderAgent:
             agent_candidates.extend(doc_candidates)
             state.add_log(
                 "coder_agent",
-                "paragraph_structuring_completed",
+                f"{mode}_completed",
                 {
                     "source_doc_id": source_doc.doc_id,
-                    "paragraph_count": len(skill_inputs["paragraphs"]),
+                    "skill": skill_name,
+                    "content_count": len(skill_inputs[content_key]),
                     "candidate_count": len(doc_candidates),
                 },
             )
