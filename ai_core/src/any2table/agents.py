@@ -13,6 +13,7 @@ from any2table.candidates.builders import (
 )
 from any2table.core.models import VerificationCheck
 from any2table.core.runtime import AgentState
+from any2table.indexing.build_units import build_retrieval_units
 from any2table.merging import merge_candidates
 from any2table.skills.executor import execute_skill
 from any2table.skills.renderer import render_skill_prompt
@@ -280,23 +281,78 @@ class TableAgent:
         return state
 
 
+def _should_use_rag(state: AgentState) -> tuple[bool, str]:
+    """Decide whether this task warrants RAG augmentation.
+
+    RouterAgent runs before RetrievalAgent, so evidence_pack may not be available yet.
+    Rules based on task_spec and source_docs (always available at routing time):
+
+    - 3+ source documents: increased ambiguity benefits from RAG reranking.
+    - 2+ constraints: selective task benefits from RAG filtering.
+    - 5+ target fields: complex schema benefits from RAG field grounding.
+
+    If evidence_pack is available (e.g. re-routing), also check field coverage.
+
+    Returns (use_rag, reason_string).
+    """
+    task_spec = state.task_spec
+
+    if task_spec is None:
+        return False, "missing_task_spec"
+
+    # Rule 1: multiple source docs increase ambiguity
+    if len(state.source_docs) >= 3:
+        return True, "multiple_source_docs_benefit_from_rag_reranking"
+
+    # Rule 2: many constraints mean the task is selective
+    if len(task_spec.constraints) >= 2:
+        return True, "multiple_constraints_benefit_from_rag_filtering"
+
+    # Rule 3: many target fields — complex schema benefits from semantic grounding
+    if len(task_spec.target_fields) >= 5:
+        return True, "complex_schema_benefits_from_rag_field_grounding"
+
+    # Rule 4 (optional): if evidence is already available, check field coverage
+    evidence_pack = state.evidence_pack
+    if evidence_pack is not None:
+        target_field_count = len(task_spec.target_fields)
+        if target_field_count > 0:
+            covered_fields: set[str] = set()
+            for item in evidence_pack.items:
+                if isinstance(item.content, dict):
+                    covered_fields.update(item.content.keys())
+            coverage = len(covered_fields & set(task_spec.target_fields)) / target_field_count
+            if coverage < 0.5:
+                return True, f"low_field_coverage_{coverage:.0%}_suggests_rag_needed"
+
+    return False, "direct_route_sufficient"
+
+
 class RouterAgent:
-    """Decides whether the current task should stay on the direct path or go through a future RAG path."""
+    """Decides whether the current task should stay on the direct path or go through RAG."""
 
     def __init__(self, registry) -> None:
         self.registry = registry
 
     def run(self, state: AgentState) -> AgentState:
-        route = "direct"
-        reason = "default_direct_route_for_stage_one"
-        fallback_route = "direct"
-        confidence = 1.0
+        use_rag, reason = _should_use_rag(state)
+
+        # Only activate RAG if rag_backend is not "default" (no-op).
+        # This allows gradual opt-in: set rag_backend="hybrid" in AppConfig to enable.
+        if use_rag and self.registry.config.rag_backend != "default":
+            route = "rag"
+            confidence = 0.8
+        else:
+            route = "direct"
+            confidence = 1.0
+            if use_rag:
+                reason = f"rag_backend_is_default_noop; underlying_reason={reason}"
 
         state.selected_route = route
         state.router_decision = {
             "route": route,
             "reason": reason,
-            "fallback_route": fallback_route,
+            "fallback_route": "direct",
             "confidence": confidence,
             "router_backend": self.registry.config.router_backend,
         }
@@ -323,6 +379,7 @@ class RetrievalAgent:
             source_docs=state.source_docs,
         )
         state.evidence_pack = evidence_pack
+        state.retrieval_units = build_retrieval_units(state.source_docs)
 
         skill_result = _run_skill(
             self.registry,

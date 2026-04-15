@@ -1,7 +1,15 @@
-"""Extractors."""
+"""Extractors.
+
+.. deprecated::
+    ``DefaultExtractor`` is a legacy fallback used only when ``build_rule_candidates()``
+    returns no results. The primary extraction path goes through
+    ``any2table.candidates.builders.build_rule_candidates`` and
+    ``any2table.merging.merger.merge_candidates``. Prefer that path for new development.
+"""
 
 from __future__ import annotations
 
+import warnings
 from datetime import date, datetime
 import re
 
@@ -921,7 +929,11 @@ def _extract_records_from_paragraph_evidence(target_table, task_spec: TaskSpec, 
 
 
 class DefaultExtractor:
-    """Build records from row evidence and paragraph evidence."""
+    """Build records from row evidence and paragraph evidence.
+
+    .. deprecated::
+        This is a legacy fallback. Prefer ``build_rule_candidates()`` + ``merge_candidates()``.
+    """
 
     def extract(
         self,
@@ -929,6 +941,12 @@ class DefaultExtractor:
         template_spec: TemplateSpec,
         evidence_pack: EvidencePack,
     ) -> list[StructuredRecord]:
+        warnings.warn(
+            "DefaultExtractor.extract() is a legacy fallback path. "
+            "The primary extraction path uses build_rule_candidates() and merge_candidates().",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         all_records: list[StructuredRecord] = []
         for target_table in template_spec.target_tables:
             row_records = _extract_records_from_row_evidence(target_table, task_spec, evidence_pack)
