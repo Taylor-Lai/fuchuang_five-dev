@@ -2,11 +2,20 @@
 
 from __future__ import annotations
 
+import logging
+
 from any2table.core.models import CanonicalDocument, EvidenceItem, EvidencePack, TaskSpec, TemplateSpec
+
+logger = logging.getLogger(__name__)
 
 
 def _table_row_to_dict(table, row) -> dict[str, object]:
     data: dict[str, object] = {}
+    if len(table.headers) != len(row.cells):
+        logger.warning(
+            "Header count (%d) != cell count (%d) in table %s row %s; truncating to shorter",
+            len(table.headers), len(row.cells), table.table_id, row.row_id,
+        )
     for header, cell in zip(table.headers, row.cells):
         data[header.name] = cell.value
     return data

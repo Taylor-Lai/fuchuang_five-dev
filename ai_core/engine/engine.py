@@ -10,6 +10,7 @@ from langchain_core.prompts import ChatPromptTemplate
 
 from .schemas import *
 from typing import Callable
+from pydantic import model_validator
 
 from any2table.app import build_orchestrator
 from any2table.config import AppConfig
@@ -23,14 +24,43 @@ load_dotenv()
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "zhipu")
 ZHIPU_API_KEY = os.getenv("ZHIPU_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
 # 导入相应的 LLM 客户端
+ChatZhipuAI = None
+ChatOpenAI = None
+
 if LLM_PROVIDER == "zhipu" and ZHIPU_API_KEY:
-    from langchain_community.chat_models import ChatZhipuAI
+    try:
+        from langchain_community.chat_models import ChatZhipuAI
+    except ImportError:
+        raise ImportError("使用 zhipu 需要安装 langchain-community: pip install langchain-community")
 elif OPENAI_API_KEY:
-    from langchain_openai import ChatOpenAI
+    try:
+        from langchain_openai import ChatOpenAI
+    except ImportError:
+        raise ImportError("使用 OpenAI 需要安装 langchain-openai: pip install langchain-openai")
 else:
     raise ValueError("请在 .env 文件中配置 ZHIPU_API_KEY 或 OPENAI_API_KEY")
+
+# 模块级 LLM 单例
+_llm_instance = None
+
+
+def _get_llm():
+    global _llm_instance
+    if _llm_instance is None:
+        if LLM_PROVIDER == "zhipu" and ZHIPU_API_KEY:
+            _llm_instance = ChatZhipuAI(model="glm-4", api_key=ZHIPU_API_KEY, temperature=0)
+        else:
+            _llm_instance = ChatOpenAI(
+                model=OPENAI_MODEL,
+                temperature=0,
+                api_key=OPENAI_API_KEY,
+                base_url=OPENAI_BASE_URL or None,
+            )
+    return _llm_instance
 
 
 class FormatAction(BaseModel):
@@ -42,25 +72,45 @@ class FormatAction(BaseModel):
 
 
 class FormatPlan(BaseModel):
-    actions: list[FormatAction] = Field(..., description="格式修改动作列表")
+    actions: list[FormatAction] = Field(default_factory=list, description="格式修改动作列表，若无需修改则为空列表")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_actions(cls, data):
+        """兼容模型返回 'action'（单数）或字符串的情况"""
+        if isinstance(data, dict) and "action" in data and "actions" not in data:
+            val = data["action"]
+            data["actions"] = val if isinstance(val, list) else []
+        return data
 
 
 def handle_module_1_format(input_data: Mod1_FormatInput) -> Mod1_FormatOutput:
     try:
         doc_path = Path(input_data.file_path)
+        if not doc_path.exists():
+            return Mod1_FormatOutput(status="failed", message=f"文件不存在: {doc_path}")
         doc = Document(doc_path)
 
         preview_text = "\n".join([f"[{i}] {p.text}" for i, p in enumerate(doc.paragraphs[:10]) if p.text.strip()])
 
         # 初始化 LLM 客户端
-        if LLM_PROVIDER == "zhipu" and ZHIPU_API_KEY:
-            llm = ChatZhipuAI(model="glm-4", api_key=ZHIPU_API_KEY, temperature=0)
-        else:
-            llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, api_key=OPENAI_API_KEY)
+        llm = _get_llm()
         structured_llm = llm.with_structured_output(FormatPlan)
 
         prompt = ChatPromptTemplate.from_messages([
-            ("system", "你是一个文档排版助手。以下是文档的前几段预览：\n{preview}\n\n请根据用户的要求，输出格式修改动作。"),
+            ("system", (
+                "你是一个文档排版助手。以下是文档的前几段预览：\n{preview}\n\n"
+                "请根据用户的要求，以 JSON 格式输出格式修改动作列表。\n"
+                "输出格式示例：\n"
+                '{{"actions": [{{"target_paragraph_index": 0, "bold": true, "font_size": 16, "alignment": "center", "color_hex": null}}]}}\n'
+                "字段说明：\n"
+                "- target_paragraph_index: 段落索引（从0开始），-1 表示全文\n"
+                "- bold: true/false/null\n"
+                "- font_size: 整数字号或 null\n"
+                "- alignment: 'left'/'center'/'right' 或 null\n"
+                "- color_hex: 十六进制颜色如 '#FF0000' 或 null\n"
+                "不需要修改的字段填 null，必须至少返回一个 action。"
+            )),
             ("human", "用户要求：{command}")
         ])
 
@@ -115,6 +165,8 @@ def handle_module_2_extract(input_data: Mod2_ExtractInput) -> Mod2_ExtractOutput
     try:
         # 1. 读取文件文本
         file_path = input_data.file_path
+        if not Path(file_path).exists():
+            return Mod2_ExtractOutput(status="failed", message=f"文件不存在: {file_path}")
         if file_path.endswith('.docx'):
             doc = Document(file_path)
             full_text = "\n".join([p.text for p in doc.paragraphs if p.text.strip()])
@@ -142,15 +194,12 @@ def handle_module_2_extract(input_data: Mod2_ExtractInput) -> Mod2_ExtractOutput
         DynamicExtractionModel = create_model('DynamicExtractionModel', **fields_spec)
 
         # 初始化 LLM 客户端
-        if LLM_PROVIDER == "zhipu" and ZHIPU_API_KEY:
-            llm = ChatZhipuAI(model="glm-4", api_key=ZHIPU_API_KEY, temperature=0)
-        else:
-            llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, api_key=OPENAI_API_KEY)
+        llm = _get_llm()
         structured_llm = llm.with_structured_output(DynamicExtractionModel)
 
         prompt = ChatPromptTemplate.from_messages([
             ("system",
-             "你是一个精准的信息提取 AI。请从以下文本中提取指定字段。如果没有找到，请填'未找到'。\n\n文本内容：\n{text}"),
+             "你是一个精准的信息提取 AI。请从以下文本中提取指定字段，以 JSON 格式输出。如果没有找到，请填'未找到'。\n\n文本内容：\n{text}"),
             ("human", "请提取以下字段：{entities}")
         ])
 
@@ -188,7 +237,7 @@ def handle_module_3_fusion(
 
         # 配置 LLM
         llm_provider = LLM_PROVIDER
-        llm_model = "glm-4" if llm_provider == "zhipu" else "gpt-4o-mini"
+        llm_model = "glm-4" if llm_provider == "zhipu" else OPENAI_MODEL
         llm_api_key_env = "ZHIPU_API_KEY" if llm_provider == "zhipu" else "OPENAI_API_KEY"
         
         config = AppConfig(
@@ -198,6 +247,7 @@ def handle_module_3_fusion(
             llm_provider=llm_provider,
             llm_model=llm_model,
             llm_api_key_env=llm_api_key_env,
+            llm_base_url=OPENAI_BASE_URL or None,
         )
 
         assets = discover_assets(work_dir)

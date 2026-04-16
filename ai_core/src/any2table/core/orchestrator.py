@@ -8,9 +8,27 @@ from any2table.candidates.builders import (
     infer_target_entity_level,
     structured_record_to_candidate,
 )
-from any2table.core.models import FileAsset, FillRunResult
+from any2table.core.models import CanonicalDocument, FileAsset, FillRunResult
 from any2table.core.runtime import AgentState, GraphRuntime, LangGraphRuntime
 from any2table.storage import dump_intermediate_artifacts
+
+
+def _parse_and_classify(registry, files: list[FileAsset]) -> tuple[
+    list[CanonicalDocument],
+    CanonicalDocument,
+    CanonicalDocument,
+    list[CanonicalDocument],
+]:
+    """Parse all files and return (documents, template_doc, user_request_doc, source_docs)."""
+    documents = [registry.parse(file) for file in files]
+    template_doc = next((doc for doc in documents if doc.file.role == "template"), None)
+    if template_doc is None:
+        raise ValueError("No template document found.")
+    user_request_doc = next((doc for doc in documents if doc.file.role == "user_request"), None)
+    if user_request_doc is None:
+        raise ValueError("No user request document found.")
+    source_docs = [doc for doc in documents if doc.file.role == "source"]
+    return documents, template_doc, user_request_doc, source_docs
 
 
 class SequentialOrchestrator:
@@ -20,17 +38,7 @@ class SequentialOrchestrator:
         self.registry = registry
 
     def run(self, files: list[FileAsset]) -> FillRunResult:
-        documents = [self.registry.parse(file) for file in files]
-
-        template_doc = next((doc for doc in documents if doc.file.role == "template"), None)
-        if template_doc is None:
-            raise ValueError("No template document found.")
-
-        user_request_doc = next((doc for doc in documents if doc.file.role == "user_request"), None)
-        if user_request_doc is None:
-            raise ValueError("No user request document found.")
-
-        source_docs = [doc for doc in documents if doc.file.role == "source"]
+        documents, template_doc, user_request_doc, source_docs = _parse_and_classify(self.registry, files)
 
         template_spec = self.registry.template_analyzer.analyze(template_doc)
         task_spec = self.registry.get_task_planner("default").plan(
@@ -119,10 +127,7 @@ class MultiAgentOrchestrator:
         self.runtime = runtime
 
     def _build_state(self, files: list[FileAsset]) -> AgentState:
-        documents = [self.registry.parse(file) for file in files]
-        template_doc = next((doc for doc in documents if doc.file.role == "template"), None)
-        user_request_doc = next((doc for doc in documents if doc.file.role == "user_request"), None)
-        source_docs = [doc for doc in documents if doc.file.role == "source"]
+        documents, template_doc, user_request_doc, source_docs = _parse_and_classify(self.registry, files)
         return AgentState(
             files=files,
             documents=documents,
@@ -172,6 +177,8 @@ class MultiAgentOrchestrator:
                 rejected_candidates=state.rejected_candidates,
                 candidate_merge_warnings=state.candidate_merge_warnings,
             )
+
+        state.clear_intermediate()
 
         return FillRunResult(
             fill_result=state.fill_result,

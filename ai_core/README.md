@@ -1,292 +1,214 @@
-﻿# Any2table
+# Any2table
 
-Any2table 是一个面向“多源文档到目标表格自动填写”的项目。当前版本已经跑通了面向比赛场景的第一版系统：既保留了稳定的确定性主链，也接入了多智能体编排、Agent Skill 和 RAG 扩展接口，方便后续继续增强语义能力、多智能体协作和图检索能力。
+Any2table 是一个面向"多源文档到目标表格自动填写"的核心 AI 模块。它提供稳定的确定性主链，同时接入了多智能体编排、Agent Skill 和 RAG 扩展接口，方便后续继续增强语义能力和多智能体协作。
 
 ## 架构图
 
+![Any2table 多智能体架构](assets/agent-workflow-architecture.svg)
 
-![Any2table Agent Workflow](assets/agent-workflow-architecture.jpg)
+## 1. 项目概览
 
-## 1. 当前项目概览
-
-当前 Any2table 的核心定位是：
+Any2table 的核心定位：
 - 先用稳定的解析、抽取、候选融合、写回链路跑通任务
 - 再用多智能体架构把流程组织起来
-- 再通过 Agent Skill 和 RAG backend 为后续比赛版创新能力留接口
+- 通过 Agent Skill 和 RAG backend 为创新能力留接口
 
-目前已经支持的输入与输出形态：
+支持的输入与输出形态：
 - 输入侧：`txt / md / docx / xlsx`
-- 输出侧：`docx / xlsx` 模板写回
+- 输出侧：`docx / xlsx` 模板写回，输出文件位于模板文件同级的 `outputs/` 目录
 
-当前仓库中已经包含：
-- 第一版可运行的文档到表格填充流程
-- 多智能体运行时与 LangGraph 编排入口
-- 本地 Agent Skill 注册、渲染、执行与追踪机制
-- 第一版 RouterAgent 与 RAGAgent 
-- 第一版 `HybridRagBackend`
-- 三组测试数据与基础单测
+## 2. 多智能体架构
 
-## 2. 当前多智能体架构
-
-当前主流程已经升级为 7 个 Agent 串联的架构：
+主流程为 7 个 Agent 串联：
 
 ```text
-MasterAgent
-    -> TableAgent
-    -> RouterAgent
-    -> RetrievalAgent
-    -> RAGAgent
-    -> CoderAgent
-    -> VerifierAgent
+MasterAgent → TableAgent → RouterAgent → RetrievalAgent → RAGAgent → CoderAgent → VerifierAgent
 ```
 
-各 Agent 的职责如下：
-
-| Agent | 当前职责 | 当前状态 |
+| Agent | 职责 | 状态 |
 |---|---|---|
 | `MasterAgent` | 检查输入、生成执行路线、记录全局轨迹 | 已启用 |
 | `TableAgent` | 解析模板文档与用户要求，生成 `TemplateSpec / TaskSpec` | 已启用 |
-| `RouterAgent` | 决定当前任务走 `direct` 还是未来的 `rag` 路径 | 已启用，但当前固定 `direct` |
-| `RetrievalAgent` | 组织 `EvidencePack`，收集规则证据 | 已启用 |
-| `RAGAgent` | 根据 route 调用 RAG backend 做证据增强 | 已启用，但默认不改变现有流程 |
-| `CoderAgent` | 生成候选记录、合并候选、生成结构化记录 | 当前最接近核心业务 agent |
+| `RouterAgent` | 基于 source doc 数量、约束数量、字段数量动态决定路由 | 已启用，动态路由 |
+| `RetrievalAgent` | 组织 `EvidencePack`，收集规则证据，构建检索单元 | 已启用 |
+| `RAGAgent` | 根据 route 调用 RAG backend 做证据增强 | 已启用 |
+| `CoderAgent` | 生成候选记录、合并候选、生成结构化记录 | 已启用 |
 | `VerifierAgent` | 写回模板并生成校验结果 | 已启用 |
 
-当前系统共享一个统一的 `AgentState`，其中包含：
+所有 Agent 共享一个统一的 `AgentState`，包含：
 - 原始文档与解析结果
-- `TemplateSpec`
-- `TaskSpec`
-- `EvidencePack`
+- `TemplateSpec / TaskSpec / EvidencePack`
 - `selected_route / router_decision / rag_result`
 - `rule_candidates / agent_candidates / merged_candidates`
 - `records / fill_result / verification_report`
 - `messages / logs / skill_runs / skill_results / llm_runs`
 
-这意味着当前系统已经不仅仅是“顺序脚本”，而是一个有共享状态、轨迹记录和扩展接口的多智能体工作流。
+### RouterAgent 动态路由规则
 
-## 3. 当前 Agent Skill 设计
+RouterAgent 在 RetrievalAgent 之前运行，基于以下规则决定是否走 RAG：
 
-当前项目已经接入本地 Skill Runtime，技能定义位于：
-- [`.claude/skills`](/d:/Any2table/.claude/skills)
+| 规则 | 触发条件 |
+|---|---|
+| Rule 1 | source 文档 ≥ 3 个（多源歧义） |
+| Rule 2 | 任务约束 ≥ 2 个（选择性任务） |
+| Rule 3 | 目标字段 ≥ 5 个（复杂 schema） |
+| Rule 4 | 字段覆盖率 < 50%（可选，仅 evidence 已有时） |
 
-当前已有 4 个最小 Skill：
+> 注意：RAG 默认已启用（`rag_backend = "hybrid"`）。若需关闭，传参 `--rag-backend default` 或在 `AppConfig` 中修改。
 
-| Skill | 挂接 Agent | 作用 | 当前地位 |
-|---|---|---|---|
-| `any2table-task-understanding` | `MasterAgent` | 从用户要求中提取任务意图与约束 | 规划增强层 |
-| `any2table-candidate-selection` | `RetrievalAgent` | 对召回证据做建议性二次筛选 | 检索建议层 |
-| `any2table-paragraph-structuring` | `CoderAgent` | 将 docx 段落转成结构化候选记录 | 抽取增强层 |
-| `any2table-verification` | `VerifierAgent` | 对最终结果做 LLM review | 校验增强层 |
+## 3. Agent Skill
 
-当前 Skill 的定位是：
-- 已经可以挂接并执行
-- 已经可以记录 `skill_runs / skill_results / llm_runs`
-- 但默认仍以底层确定性模块保证稳定结果
+Skill 定义位于：`src/any2table/skills/definitions/`
 
-也就是说，当前系统是：
-- 确定性主链保底
-- Skill / LLM 路径负责增强
-- 后续可以逐步把更复杂的语义决策接到 Agent 上
-
-## 4. 当前 RAG 状态
-
-为了后续比赛场景中的创新性表达，当前项目已经加入了 Router 和 RAG 的第一阶段架构，但默认不影响现有结果。
-
-### 当前设计
-- `RouterAgent` 已接入主链
-- 当前 `RouterAgent` 固定输出 `route = direct`
-- `RAGAgent` 已接入主链
-- 当前 RAG 是否真正生效，取决于 route
-
-### 当前已注册的 RAG backend
-
-| Backend | 作用 | 当前状态 |
+| Skill | 挂接 Agent | 作用 |
 |---|---|---|
-| `DefaultRagBackend` | no-op，占位 backend | 默认 backend |
-| `HybridRagBackend` | 第一版 schema-grounded hybrid RAG | 已实现，但默认不进入主流程 |
+| `any2table-task-understanding` | `MasterAgent` | 从用户要求中提取任务意图与约束 |
+| `any2table-candidate-selection` | `RetrievalAgent` | 对召回证据做建议性二次筛选 |
+| `any2table-paragraph-structuring` | `CoderAgent` | 将 docx 段落转成结构化候选记录 |
+| `any2table-table-row-extraction` | `CoderAgent` | 将 xlsx 表格数据语义映射到目标字段（支持近义列名） |
+| `any2table-verification` | `VerifierAgent` | 对最终结果做 LLM review |
 
-### HybridRagBackend 当前做什么
-- 根据 `TaskSpec + TemplateSpec` 构造查询摘要
-- 从模板字段、约束、任务文本中提取 query terms
-- 对 `EvidencePack` 中的证据做 schema-aware 重排
-- 输出 `selected_unit_ids / supporting_units / field_evidence_map / query_summary`
+`CoderAgent` 按文档类型自动分发：docx（有段落块）→ `paragraph-structuring`；xlsx（仅有表格）→ `table-row-extraction`。
 
-当前策略是：
-- 先把 RAG 架构和 backend 接进去
-- 但默认仍然维持 `direct` 路径
-- 等遇到更难的数据集时，再升级 Router 策略
+Skill 定位：
+- 已可挂接并执行，记录 `skill_runs / skill_results / llm_runs`
+- 默认确定性主链保底，Skill / LLM 路径负责增强
+- 需配置 API Key 后才会实际调用 LLM
 
-## 5. 当前处理流程
+## 4. RAG 状态
 
-整体处理流程可以概括为：
+| Backend | 作用 | 状态 |
+|---|---|---|
+| `DefaultRagBackend` | no-op 占位，证据直接透传 | 可用，`--rag-backend default` 切换 |
+| `HybridRagBackend` | 全量捞取 + schema-grounded 重排序，按词法匹配、字段覆盖、元数据三路打分 | **默认启用** |
 
-1. 读取任务目录，自动识别模板、用户要求和 source 文档
-2. 解析输入文档，转换为统一的 `CanonicalDocument`
-3. 分析模板，生成 `TemplateSpec`
-4. 解析用户要求，生成 `TaskSpec`
-5. 进入多智能体运行时，按顺序执行各 Agent
-6. 检索证据，形成 `EvidencePack`
-7. 将证据转换为候选记录，并合并为最终 `StructuredRecord`
-8. 写回 `docx / xlsx` 模板
-9. 输出 `verification_report` 和调试信息
+检索原理：`RuleRetriever` 全量扫描所有源文档生成 `EvidencePack`，`HybridRagBackend` 再对证据按相关性排序，最相关的证据优先进入提取阶段。当前不依赖外部向量数据库，适合中小规模文档（数十页以内）。
 
-当前稳定业务结果主要仍来自这些底层模块：
-- `parsers.py`
-- `analyzers.py`
-- `planners.py`
-- `retrievers.py`
-- `extractors.py`
-- `candidates`
-- `merging`
-- `writers.py`
+## 5. 安装
 
-## 6. 安装方式
-
-### 6.1 Python 版本
-建议使用：
-- `Python 3.11`
-
-### 6.2 基础安装
-
-先在项目根目录安装本项目：
-
-```powershell
+```bash
+# 建议 Python 3.11
+cd ai_core
 pip install -e .
-```
 
-### 6.3 推荐补充依赖
+# 可选：增强解析和 docx 写回
+pip install python-docx docling
 
-为了完整跑通当前样例，建议额外安装：
-
-```powershell
-pip install python-docx
-pip install docling
-```
-
-说明：
-- `openpyxl` 已在项目依赖中声明
-- `python-docx` 用于 `docx` 模板写回
-- `docling` 用于 source 文档侧的 Docling 解析器
-
-如果你使用 conda，也可以先创建环境后再安装，例如：
-
-```powershell
+# 或使用 conda
 conda create -n any2table python=3.11 -y
 conda activate any2table
 pip install -e .
-pip install python-docx
-pip install docling
+pip install python-docx docling
 ```
 
-## 7. 如何运行
+## 6. CLI 使用
 
-### 7.1 查看目录中的任务文件识别结果
+### 查看文件识别结果
 
-```powershell
-python -m any2table.cli inspect --path ".\test_data\COVID-19数据集"
+```bash
+python -m any2table.cli inspect --path "./test_data/mini"
 ```
 
-这个命令会输出当前目录下文件被识别成：
-- `template`
-- `user_request`
-- `source`
+### 顺序模式（默认）
 
-### 7.2 运行默认主流程
-
-```powershell
-python -m any2table.cli run --path ".\test_data\COVID-19数据集"
+```bash
+python -m any2table.cli run --path "./test_data/mini"
 ```
 
-这会执行当前默认流程，并输出 JSON 结果。
+### 多智能体模式
 
-### 7.3 运行多智能体版本
-
-```powershell
-python -m any2table.cli run --path ".\test_data\COVID-19数据集" --agent-runtime --agent-runtime-backend langgraph
+```bash
+python -m any2table.cli run --path "./test_data/mini" --agent-runtime --agent-runtime-backend langgraph
 ```
 
-说明：
-- `--agent-runtime` 表示启用多智能体运行时
-- `--agent-runtime-backend langgraph` 表示使用 LangGraph 编排
+### 关闭 RAG（RAG 默认已开启）
 
-### 7.4 运行并导出中间结果
-
-```powershell
-python -m any2table.cli run --path ".\test_data\COVID-19数据集" --agent-runtime --agent-runtime-backend langgraph --dump-intermediate > .\outputs\covid-run.json
+```bash
+python -m any2table.cli run --path "./test_data/mini" --agent-runtime --rag-backend default
 ```
 
-这适合调试：
-- 最终 JSON 输出
-- 中间 canonical / retrieval / schema 结果
-- route / skill / llm / rag 调试信息
+### 导出中间产物（调试）
 
-### 7.5 显式选择 RAG backend
-
-```powershell
-python -m any2table.cli run --path ".\test_data\COVID-19数据集" --agent-runtime --agent-runtime-backend langgraph --rag-backend hybrid
+```bash
+python -m any2table.cli run --path "./test_data/mini" --agent-runtime --dump-intermediate
 ```
 
-注意：
-- 即使这里指定 `--rag-backend hybrid`
-- 只要 `RouterAgent` 仍然固定 `direct`
-- 当前主流程结果就不会被 RAG 改写
+### 启用 LLM Skill
 
-## 8. 如何启用 LLM Skill
+```bash
+export OPENAI_API_KEY="你的APIKey"
 
-如果要启用基于 API 的 Skill 执行，需要先配置 API Key 和 Base URL。
-
-例如在 PowerShell 中：
-
-```powershell
-$env:OPENAI_API_KEY="你的APIKey"
+python -m any2table.cli run --path "./test_data/mini" \
+  --agent-runtime \
+  --enable-llm-skills \
+  --llm-model gpt-4o-mini \
+  --llm-base-url "你的OpenAI兼容BaseURL"
 ```
 
-然后执行：
+## 7. 输出位置
 
-```powershell
-python -m any2table.cli run --path ".\test_data\COVID-19数据集" --agent-runtime --agent-runtime-backend langgraph --enable-llm-skills --llm-model gpt-4o-mini --llm-base-url "你的OpenAI兼容BaseURL"
-```
-
-说明：
-- `--enable-llm-skills` 会启用 Skill 的 LLM 执行
-- 当前模型名可通过 `--llm-model` 指定
-- 当前 API Key 环境变量默认读取 `OPENAI_API_KEY`
-- 如果你使用别的环境变量名，可以用 `--llm-api-key-env` 指定
-
-## 9. 输出位置
-
-运行成功后，输出通常在以下位置：
-- 模板写回文件：`outputs/`
-- 调试 JSON：由你重定向到目标文件，例如 `outputs/covid-run.json`
+- 写回文件：模板文件所在目录下的 `outputs/` 子目录
 - 中间产物：默认写到 `workspace/cache/`
 
-例如：
-- `outputs/COVID-19 模板-filled.xlsx`
-- `outputs/2025山东省环境空气质量监测数据信息-模板-filled.docx`
+例如，模板在 `test_data/mini/模板.xlsx`，输出在 `test_data/mini/outputs/模板-filled.xlsx`。
 
-## 10. 当前项目状态
+## 8. 工作区文件命名约定
 
-当前项目已经完成的内容包括：
-- 基础文档解析与模板写回流程
-- `CandidateRecord / merger` 中间层
-- 多智能体主链路
-- LangGraph 运行时接入
-- 4 个最小 Agent Skill
-- RouterAgent 与 RAGAgent 抽象层
-- 第一版 `HybridRagBackend`
-- 三组样例数据的稳定跑通
+CLI 自动按文件名分类：
 
-当前还属于第一阶段的部分包括：
-- `RouterAgent` 还没有做真正动态路由
-- RAG 还没有默认介入主链
-- Skill 还没有全面接管业务决策
-- 还没有更重型的多智能体协作、judge、graph RAG 和 KG 推理
+| 关键词 | 分类 |
+|---|---|
+| 文件名含 `模板` 或 `template` | `template` 角色 |
+| 文件名含 `用户要求` | `user_request` 角色 |
+| 其他 | `source` 角色 |
 
+## 9. 测试
 
-## 12. 总结
+```bash
+cd ai_core
+python -m unittest discover -s tests -v
+```
 
-当前 Any2table 已经具备：
-- 稳定的文档到表格自动填写主链
-- 清晰的多智能体编排结构
-- 可插拔的 Agent Skill 机制
-- 已接入但默认关闭的 Router + RAG 扩展层
+共 11 个单元测试，覆盖候选合并、RAG backend、行解析与日期策略。
+
+## 10. 项目结构
+
+```
+ai_core/
+├── engine/                  # FastAPI 接入层（供 main.py 调用）
+│   ├── engine.py            # handle_module_3_fusion 等入口函数
+│   └── schemas.py
+├── src/any2table/
+│   ├── agents.py            # 7 个 Agent 实现
+│   ├── app.py               # build_registry / build_orchestrator
+│   ├── config.py            # AppConfig
+│   ├── parsers.py           # DocxParser / XlsxParser / TextParser / DoclingSourceParser
+│   ├── analyzers.py         # TemplateAnalyzer
+│   ├── planners.py          # TaskPlanner
+│   ├── retrievers.py        # RuleRetriever
+│   ├── extractors.py        # 通用规则提取（模糊列名匹配 + KV段落提取）
+│   ├── rag.py               # DefaultRagBackend / HybridRagBackend
+│   ├── writers.py           # XlsxWriter / DocxTableWriter
+│   ├── verifiers.py         # DefaultVerifier
+│   ├── compute.py           # PythonComputeEngine
+│   ├── registry.py          # ComponentRegistry
+│   ├── candidates/          # CandidateRecord 与构建逻辑
+│   ├── merging/             # 候选合并器
+│   ├── indexing/            # 检索单元构建
+│   ├── core/
+│   │   ├── models.py        # 全部领域模型
+│   │   ├── protocols.py     # 组件接口协议
+│   │   ├── runtime.py       # AgentState / GraphRuntime / LangGraphRuntime
+│   │   └── orchestrator.py  # SequentialOrchestrator / MultiAgentOrchestrator
+│   ├── skills/
+│   │   ├── definitions/     # 5 个 Skill 定义（SKILL.md）
+│   │   ├── loader.py
+│   │   ├── registry.py
+│   │   ├── renderer.py
+│   │   └── executor.py
+│   └── llm/                 # OpenAI-compatible LLM client
+└── tests/
+    ├── test_candidate_merger.py
+    ├── test_hybrid_rag.py
+    └── test_row_resolution.py
+```

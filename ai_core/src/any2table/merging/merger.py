@@ -43,7 +43,9 @@ def _merge_into_base(base: CandidateRecord, incoming: CandidateRecord) -> Candid
     field_evidence = {field_name: list(evidence_ids) for field_name, evidence_ids in base.field_evidence.items()}
     notes = list(base.notes)
     metadata = dict(base.metadata)
-    metadata.setdefault("merged_from", [base.candidate_id])
+    existing = metadata.get("merged_from")
+    if not isinstance(existing, list):
+        metadata["merged_from"] = [base.candidate_id]
     metadata["merged_from"].append(incoming.candidate_id)
 
     source_strategies = list(metadata.get("source_strategies", []))
