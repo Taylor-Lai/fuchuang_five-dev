@@ -114,8 +114,8 @@ def handle_module_1_format(input_data: Mod1_FormatInput) -> Mod1_FormatOutput:
             ("human", "用户要求：{command}")
         ])
 
-        plan: FormatPlan = structured_llm.invoke(
-            prompt.format(preview=preview_text, command=input_data.natural_language_cmd))
+        chain = prompt | structured_llm
+        plan: FormatPlan = chain.invoke({"preview": preview_text, "command": input_data.natural_language_cmd})
 
         # 检查 plan 是否为 None
         if plan is None:
@@ -138,18 +138,29 @@ def handle_module_1_format(input_data: Mod1_FormatInput) -> Mod1_FormatOutput:
                     continue
 
             for p in paras_to_modify:
-                if action.alignment == 'center':
+                if action.alignment == 'left':
+                    p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                elif action.alignment == 'center':
                     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
                 elif action.alignment == 'right':
                     p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+
+                # 如果段落没有 runs（Word 中常见），为整段创建一个 run
+                if not p.runs and p.text:
+                    text = p.text
+                    p.clear()
+                    p.add_run(text)
 
                 for run in p.runs:
                     if action.bold is not None: run.bold = action.bold
                     if action.font_size is not None: run.font.size = Pt(action.font_size)
                     if action.color_hex:
                         hex_color = action.color_hex.lstrip('#')
-                        run.font.color.rgb = RGBColor(int(hex_color[:2], 16), int(hex_color[2:4], 16),
-                                                      int(hex_color[4:], 16))
+                        if len(hex_color) == 3:
+                            hex_color = ''.join(c * 2 for c in hex_color)
+                        if len(hex_color) == 6:
+                            run.font.color.rgb = RGBColor(int(hex_color[:2], 16), int(hex_color[2:4], 16),
+                                                          int(hex_color[4:], 16))
 
         # 4. 保存新文件
         output_path = doc_path.parent / f"{doc_path.stem}_formatted{doc_path.suffix}"
@@ -203,14 +214,14 @@ def handle_module_2_extract(input_data: Mod2_ExtractInput) -> Mod2_ExtractOutput
             ("human", "请提取以下字段：{entities}")
         ])
 
-        result = structured_llm.invoke(
-            prompt.format(text=full_text[:8000], entities=", ".join(input_data.target_entities)))
+        chain = prompt | structured_llm
+        result = chain.invoke({"text": full_text[:8000], "entities": ", ".join(input_data.target_entities)})
 
         # 检查 result 是否为 None
         if result is None:
             return Mod2_ExtractOutput(status="failed", message="AI 未能生成有效的提取结果，请检查 API 密钥或重试")
 
-        return Mod2_ExtractOutput(status="success", extracted_data=result.dict())
+        return Mod2_ExtractOutput(status="success", extracted_data=result.model_dump())
 
     except Exception as e:
         return Mod2_ExtractOutput(status="failed", message=traceback.format_exc())
