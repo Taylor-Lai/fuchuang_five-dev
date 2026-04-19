@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-import logging
-
 from any2table.core.models import CanonicalDocument
-
-logger = logging.getLogger(__name__)
 
 
 def _location_payload(location) -> dict[str, object] | None:
@@ -87,11 +83,6 @@ def build_retrieval_units(documents: list[CanonicalDocument]) -> dict[str, list[
             )
             for row in table.rows[1:]:
                 payload: dict[str, object] = {}
-                if len(table.headers) != len(row.cells):
-                    logger.warning(
-                        "Header/cell count mismatch in table %s row %s: %d headers vs %d cells",
-                        table.table_id, row.row_id, len(table.headers), len(row.cells),
-                    )
                 for header, cell in zip(table.headers, row.cells):
                     payload[header.name] = cell.value
                 units.append(

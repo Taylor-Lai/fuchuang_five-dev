@@ -58,7 +58,6 @@ class AgentState:
     skill_runs: list[dict[str, object]] = field(default_factory=list)
     skill_results: list[dict[str, object]] = field(default_factory=list)
     llm_runs: list[dict[str, object]] = field(default_factory=list)
-    retrieval_units: dict[str, list[dict[str, object]]] = field(default_factory=dict)
     retry_count: int = 0
     runtime_backend: str | None = None
 
@@ -129,27 +128,6 @@ class AgentState:
         if error:
             payload["error"] = error
         self.llm_runs.append(payload)
-
-    def clear_intermediate(self, *, max_log_entries: int = 200) -> None:
-        """Release intermediate candidate lists and trim log lists to bound memory usage.
-
-        Call this after the fill result has been written and the pipeline is complete.
-        The final outputs (fill_result, verification_report, records) are retained.
-        """
-        self.rule_candidates = []
-        self.agent_candidates = []
-        self.merged_candidates = []
-        self.rejected_candidates = []
-        self.candidate_merge_warnings = []
-        self.retrieval_units = {}
-        if len(self.logs) > max_log_entries:
-            self.logs = self.logs[-max_log_entries:]
-        if len(self.messages) > max_log_entries:
-            self.messages = self.messages[-max_log_entries:]
-        if len(self.skill_runs) > max_log_entries:
-            self.skill_runs = self.skill_runs[-max_log_entries:]
-        if len(self.llm_runs) > max_log_entries:
-            self.llm_runs = self.llm_runs[-max_log_entries:]
 
 
 class GraphRuntime:

@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import logging
 import os
 from pathlib import Path
-
-logger = logging.getLogger(__name__)
 
 from any2table.config import AppConfig
 from any2table.llm.models import LlmResponse
@@ -75,13 +72,6 @@ class OpenAiLlmClient:
         self.is_available = OpenAI is not None and bool(api_key)
         self._client = OpenAI(api_key=api_key, base_url=self.base_url) if self.is_available else None
 
-        if OpenAI is None:
-            logger.warning("openai package is not installed; LLM skills will be unavailable")
-        elif not api_key:
-            logger.warning("API key env var '%s' is not set; LLM skills will be unavailable", config.llm_api_key_env)
-        else:
-            logger.info("LLM client initialized: provider=%s, model=%s, base_url=%s", self.provider, self.model, self.base_url)
-
     def invoke_json(self, *, system_prompt: str, user_prompt: str) -> LlmResponse:
         if not self.is_available or self._client is None:
             raise RuntimeError("OpenAI-compatible LLM client is not available. Check dependency and API key.")
@@ -94,10 +84,7 @@ class OpenAiLlmClient:
             ],
             response_format={"type": "json_object"},
         )
-        raw_content = response.choices[0].message.content
-        if raw_content is None:
-            logger.warning("LLM returned None content; defaulting to empty JSON object")
-        content = raw_content or "{}"
+        content = response.choices[0].message.content or "{}"
         return LlmResponse(
             content=content,
             model=self.model,

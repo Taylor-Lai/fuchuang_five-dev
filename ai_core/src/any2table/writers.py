@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from datetime import datetime
 from pathlib import Path
 
@@ -11,13 +10,11 @@ from openpyxl import load_workbook
 
 from any2table.core.models import CanonicalDocument, CellWriteTrace, FillResult, StructuredRecord, TemplateSpec
 
-logger = logging.getLogger(__name__)
-
 
 def _ensure_output_path(template_doc: CanonicalDocument) -> Path:
-    src_path = Path(template_doc.file.path)
-    output_dir = src_path.parent / "outputs"
+    output_dir = Path("outputs")
     output_dir.mkdir(exist_ok=True)
+    src_path = Path(template_doc.file.path)
     return output_dir / f"{src_path.stem}-filled{src_path.suffix}"
 
 
@@ -54,10 +51,6 @@ class XlsxWriter:
 
         for table_index, target_table in enumerate(template_spec.target_tables):
             if table_index >= len(workbook.worksheets):
-                logger.warning(
-                    "Target table %s (index %d) has no corresponding worksheet; skipping",
-                    target_table.target_table_id, table_index,
-                )
                 continue
             worksheet = workbook.worksheets[table_index]
             data_start_row = 2
@@ -108,10 +101,6 @@ class DocxTableWriter:
 
         for table_index, target_table in enumerate(template_spec.target_tables):
             if table_index >= len(document.tables):
-                logger.warning(
-                    "Target table %s (index %d) has no corresponding docx table; skipping",
-                    target_table.target_table_id, table_index,
-                )
                 continue
             docx_table = document.tables[table_index]
             target_records = records_by_table.get(target_table.target_table_id, [])
@@ -126,10 +115,6 @@ class DocxTableWriter:
 
             for record_index, record in enumerate(target_records, start=1):
                 if record_index >= len(docx_table.rows):
-                    logger.warning(
-                        "Not enough rows in docx table for target %s; stopping at record %d of %d",
-                        target_table.target_table_id, record_index, len(target_records),
-                    )
                     break
                 row = docx_table.rows[record_index]
                 for col_index, field in enumerate(target_table.schema):

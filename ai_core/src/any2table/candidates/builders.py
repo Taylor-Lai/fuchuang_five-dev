@@ -11,18 +11,7 @@ PROVINCE_TOKENS = ("省", "自治区", "直辖市", "兵团")
 CITY_TOKENS = ("市", "州", "地区")
 
 
-def identity_fields_for_target_fields(
-    target_fields: list[str],
-    *,
-    field_specs: list | None = None,
-) -> list[str]:
-    if field_specs:
-        TEXT_LIKE = {"string", "text", "str", ""}
-        for spec in field_specs:
-            dt = (getattr(spec, "data_type", None) or "").lower()
-            if dt in TEXT_LIKE or not dt:
-                return [spec.field_name]
-        return [field_specs[0].field_name]
+def identity_fields_for_target_fields(target_fields: list[str]) -> list[str]:
     identity_fields = [field_name for field_name in ("国家/地区", "城市") if field_name in target_fields]
     if identity_fields:
         return identity_fields

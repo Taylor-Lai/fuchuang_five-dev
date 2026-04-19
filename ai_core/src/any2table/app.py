@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import logging
-
 from any2table.agents import CoderAgent, MasterAgent, RAGAgent, RetrievalAgent, RouterAgent, TableAgent, VerifierAgent
 from any2table.analyzers import DefaultTemplateAnalyzer
 from any2table.compute import PythonComputeEngine
@@ -21,21 +19,12 @@ from any2table.skills.registry import SkillRegistry
 from any2table.verifiers import DefaultVerifier
 from any2table.writers import DocxTableWriter, XlsxWriter
 
-logger = logging.getLogger(__name__)
-
 
 def build_registry(config: AppConfig | None = None) -> ComponentRegistry:
     registry = ComponentRegistry()
     registry.config = config or AppConfig()
 
-    docling_parser = DoclingSourceParser()
-    if not docling_parser._converter:
-        logger.warning(
-            "docling is not installed or failed to initialize; "
-            "source documents will be parsed with DocxParser/XlsxParser instead. "
-            "Install docling for enhanced table extraction: pip install docling"
-        )
-    registry.register_parser(docling_parser)
+    registry.register_parser(DoclingSourceParser())
     registry.register_parser(TextParser())
     registry.register_parser(DocxParser())
     registry.register_parser(XlsxParser())
