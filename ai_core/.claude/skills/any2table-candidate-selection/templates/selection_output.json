@@ -1,0 +1,16 @@
+{
+  "selected_evidence_ids": [
+    "evidence-1",
+    "evidence-4",
+    "evidence-9"
+  ],
+  "rejected_evidence_ids": [
+    "evidence-2",
+    "evidence-3"
+  ],
+  "need_more_retrieval": false,
+  "selection_notes": [
+    "保留了同时满足日期约束且字段更完整的候选",
+    "其余候选与模板描述不一致或字段残缺"
+  ]
+}

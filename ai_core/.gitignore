@@ -1,0 +1,84 @@
+﻿# OS / Editor
+.DS_Store
+Thumbs.db
+Desktop.ini
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Build / packaging
+build/
+dist/
+site/
+.eggs/
+*.egg-info/
+*.egg
+pip-wheel-metadata/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# Conda
+.conda/
+conda-meta/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Local secrets / env
+.env
+.env.*
+*.env
+
+# Project outputs
+logs
+outputs
+workspace
+*.log
+
+# Temporary / backup files
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+
+# Test / local runtime artifacts
+.cache/
+coverage.xml
+nosetests.xml
+
+# Docs and generated docs
+/docs/
+mkdocs.yml
+
+# Optional local data artifacts
+*.sqlite
+*.db
+*.parquet
+
+# Office temp files
+~$*.docx
+~$*.xlsx
+
+# Node / frontend leftovers
+node_modules/
+
+# Project-specific local notes
+*.local.md

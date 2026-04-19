@@ -1,0 +1,82 @@
+{
+  "pages": [
+    {
+      "path": "pages/index/index",
+      "style": {
+        "navigationBarTitleText": "首页"
+      }
+    },
+    {
+      "path": "pages/templates/index",
+      "style": {
+        "navigationBarTitleText": "模板库"
+      }
+    },
+    {
+      "path": "pages/editor/index",
+      "style": {
+        "navigationBarTitleText": "编辑"
+      }
+    },
+    {
+      "path": "pages/profile/index",
+      "style": {
+        "navigationBarTitleText": "个人中心"
+      }
+    },
+    {
+      "path": "pages/doc-chat/index",
+      "style": {
+        "navigationBarTitleText": "文档智能操作交互"
+      }
+    },
+    {
+      "path": "pages/extract/index",
+      "style": {
+        "navigationBarTitleText": "非结构化文档信息提取"
+      }
+    },
+    {
+      "path": "pages/form-fill/index",
+      "style": {
+        "navigationBarTitleText": "表格自定义数据填写"
+      }
+    },
+    {
+      "path": "pages/auth/auth",
+      "style": {
+        "navigationBarTitleText": "登录"
+      }
+    }
+  ],
+  "globalStyle": {
+    "navigationBarTextStyle": "black",
+    "navigationBarTitleText": "智汇文枢",
+    "navigationBarBackgroundColor": "#F5F6F8",
+    "backgroundColor": "#F5F6F8"
+  },
+  "tabBar": {
+    "color": "#666666",
+    "selectedColor": "#2DBE60",
+    "backgroundColor": "#FFFFFF",
+    "borderStyle": "black",
+    "list": [
+      {
+        "pagePath": "pages/index/index",
+        "text": "首页"
+      },
+      {
+        "pagePath": "pages/templates/index",
+        "text": "模板库"
+      },
+      {
+        "pagePath": "pages/editor/index",
+        "text": "编辑"
+      },
+      {
+        "pagePath": "pages/profile/index",
+        "text": "个人中心"
+      }
+    ]
+  }
+}

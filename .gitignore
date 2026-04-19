@@ -1,0 +1,126 @@
+# ====================
+# 1. Python 编译文件
+# ====================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# ====================
+# 2. 虚拟环境（重要！）
+# ====================
+venv/
+env/
+.venv/
+ENV/
+.ENV/
+.conda/
+
+# ====================
+# 3. 密钥和敏感配置（重要！）
+# ====================
+.env
+.env.local
+.env.production
+.env.example
+*.key
+*.pem
+*.crt
+secrets.json
+config.private.json
+*.db
+*.sqlite
+*.sqlite3
+
+# ====================
+# 4. IDE 配置
+# ====================
+# VS Code
+.vscode/
+*.code-workspace
+
+# PyCharm/IntelliJ
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# 其他
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+
+# ====================
+# 5. 操作系统文件
+# ====================
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+.fuse_hidden*
+
+# ====================
+# 6. 项目特定文件
+# ====================
+# 日志文件
+*.log
+logs/
+log/
+
+# 临时文件
+tmp/
+temp/
+.tmp/
+
+# 上传的文件（如果有的话）
+uploads/
+upload/
+files/
+
+# 测试数据（如果包含敏感信息）
+test_data/
+testdata/
+
+# 数据库文件
+*.db
+*.sqlite
+*.sqlite3
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+# ====================
+# 7. 竞赛特定（可选）
+# ====================
+# 如果有些文件只本地测试用
+local_test/
+backup/
+*.bak

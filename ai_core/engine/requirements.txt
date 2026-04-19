@@ -1,0 +1,6 @@
+langchain>=0.1.0
+langgraph>=0.0.20
+python-docx
+docling
+pydantic
+openai
