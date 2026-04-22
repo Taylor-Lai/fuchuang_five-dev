@@ -621,7 +621,7 @@ async def doc_extract_upload(
 @app.post("/table-fill/upload")
 async def table_fill_upload(
     background_tasks: BackgroundTasks,
-    template: UploadFile = File(..., description="Excel 模板文件 (.xlsx)"),
+    template: UploadFile = File(..., description="模板文件 (.xlsx 或 .docx)"),
     documents: List[UploadFile] = File(..., description="源文档 (.docx, .txt, .md 等)"),
     user_request: str = Form("", description="用户的附加自然语言要求（可选）"),
     db: Session = Depends(get_db),
@@ -634,8 +634,10 @@ async def table_fill_upload(
     """
     try:
         # 1. 校验模板文件类型
-        if not template.filename.lower().endswith(".xlsx"):
-            raise HTTPException(400, "模板文件必须是 .xlsx 格式")
+        ALLOWED_TEMPLATE_EXTS = {".xlsx", ".docx"}
+        template_ext = Path(template.filename).suffix.lower()
+        if template_ext not in ALLOWED_TEMPLATE_EXTS:
+            raise HTTPException(400, f"模板文件必须是 .xlsx 或 .docx 格式，当前为 {template_ext}")
         
         # 2. 创建工作空间目录
         workspace_dir = Path(tempfile.gettempdir()) / f"table_fill_{uuid.uuid4().hex[:8]}"
