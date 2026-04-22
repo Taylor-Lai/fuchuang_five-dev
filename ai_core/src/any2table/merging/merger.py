@@ -1,4 +1,4 @@
-﻿"""Merge rule and agent candidate records with entity-level safeguards."""
+"""Merge rule and agent candidate records with entity-level safeguards."""
 
 from __future__ import annotations
 
