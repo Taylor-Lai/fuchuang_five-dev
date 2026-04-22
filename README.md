@@ -68,17 +68,28 @@ docker run -p 8000:8000 --env-file .env docnexus
 
 ---
 
-## 测试方法一：Swagger UI（推荐）
+## 测试方法一：Postman（推荐）
 
-浏览器打开 `http://localhost:8000/docs`，所有接口均可在网页上直接测试。
+使用 Postman 测试所有接口，步骤如下：
 
 ### 第一步：登录获取 Token
 
-找到 `POST /auth/login`，点击 **Try it out**，填入：
-```json
-{ "email": "admin@example.com", "password": "admin123" }
-```
-执行后复制 `access_token`，点击右上角 **Authorize** 填入 `Bearer <token>`。
+1. 打开 Postman，创建一个新的请求
+2. 方法：`POST`
+3. URL：`http://localhost:8000/auth/login`
+4. 选择 `Body` → `raw` → `JSON`
+5. 输入：
+   ```json
+   { "email": "admin@example.com", "password": "admin123" }
+   ```
+6. 点击 `Send`，复制返回的 `access_token`
+7. 在 Postman 中创建一个新的环境变量 `token`，值为获取到的 `access_token`
+
+### 第二步：设置认证
+
+1. 点击 Postman 右上角的环境选择器，选择你创建的环境
+2. 在请求的 `Authorization` 选项卡中，选择 `Bearer Token`
+3. 在 `Token` 字段中输入 `{{token}}`
 
 ---
 
@@ -86,15 +97,18 @@ docker run -p 8000:8000 --env-file .env docnexus
 
 **接口：** `POST /doc-chat/upload`
 
-| 参数 | 说明 |
-|---|---|
-| `command` | 自然语言格式指令 |
-| `document` | 上传任意 `.docx` 文件 |
+1. 方法：`POST`
+2. URL：`http://localhost:8000/doc-chat/upload`
+3. `Authorization`：使用上述设置的 Bearer Token
+4. `Body` → `form-data`
+5. 添加参数：
+   - `command`：自然语言格式指令
+   - `document`：选择 `File` 类型，上传任意 `.docx` 文件
 
 **指令示例：**
-- `"把第一段文字加粗并设置为红色"`
-- `"将所有标题字号改为16号"`
-- `"把第二段文字居中对齐"`
+- "把第一段文字加粗并设置为红色"
+- "将所有标题字号改为16号"
+- "把第二段文字居中对齐"
 
 返回：格式修改后的 Word 文件（自动下载）
 
@@ -104,10 +118,13 @@ docker run -p 8000:8000 --env-file .env docnexus
 
 **接口：** `POST /doc-extract/upload`
 
-| 参数 | 说明 |
-|---|---|
-| `file` | 上传文档（docx / txt）|
-| `target_entities` | 要提取的字段，逗号分隔，如 `姓名,年龄,职位` |
+1. 方法：`POST`
+2. URL：`http://localhost:8000/doc-extract/upload`
+3. `Authorization`：使用上述设置的 Bearer Token
+4. `Body` → `form-data`
+5. 添加参数：
+   - `file`：选择 `File` 类型，上传文档（docx / txt）
+   - `target_entities`：要提取的字段，逗号分隔，如 `姓名,年龄,职位`
 
 返回：JSON 格式的提取结果
 
@@ -116,6 +133,15 @@ docker run -p 8000:8000 --env-file .env docnexus
 ### 模块三：多智能体填表（核心功能）
 
 **接口：** `POST /table-fill/upload`
+
+1. 方法：`POST`
+2. URL：`http://localhost:8000/table-fill/upload`
+3. `Authorization`：使用上述设置的 Bearer Token
+4. `Body` → `form-data`
+5. 添加参数：
+   - `template`：选择 `File` 类型，上传模板文件
+   - `documents`：选择 `File` 类型，上传源文档（可多次添加）
+   - `user_request`：用户要求（可选）
 
 测试文件位于项目 `测试集/测试集/包含模板文件/` 目录，共三个场景：
 
