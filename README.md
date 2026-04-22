@@ -1,66 +1,30 @@
-# 智汇文枢
+# 智汇文枢 · DocNexus
 
-智汇文枢是一个基于 FastAPI 的文档智能处理平台，提供文档格式化、信息提取和多智能体表格自动填写三大核心能力。
+基于 FastAPI 的文档智能处理平台，提供三大核心能力：
 
-## 功能模块
+| 模块 | 接口 | 功能 |
+|---|---|---|
+| 模块一 | `POST /doc-chat/upload` | 自然语言驱动的 Word 文档格式化 |
+| 模块二 | `POST /doc-extract/upload` | 从文档中提取结构化字段信息 |
+| 模块三 | `POST /table-fill/upload` | 多智能体跨文档自动填表（xlsx / docx）|
 
-### 模块一：文档智能格式化（`/doc-chat/upload`）
+---
 
-通过自然语言指令对 Word 文档进行格式调整、排版操作，底层由 LangChain + LLM 驱动。
+## 环境要求
 
-**接口：** `POST /doc-chat/upload`
-- `command`：自然语言指令（如"把第一段变成红色字体并加粗"）
-- `document`：`.docx` 文件
-- 返回处理后的文件（文件流下载）
+- Python 3.11+
+- 需要一个 **OpenAI 兼容的 LLM API**（模块三必需）
+  - 推荐：阿里云百炼（`qwen-max`）、智谱 GLM-4、OpenAI
+  - 申请地址：https://dashscope.console.aliyun.com（阿里云，免费额度）
 
-### 模块二：文档信息提取（`/doc-extract/upload`）
+---
 
-从文档中按指定字段提取结构化信息，结果入库并支持查询。
-
-**接口：**
-- `POST /doc-extract/upload`：上传文档并提取
-- `GET /doc-extract`：获取提取历史
-- `GET /doc-extract/{record_id}`：获取单条记录
-- `DELETE /doc-extract/{record_id}`：删除记录
-
-### 模块三：多智能体表格填写（`/table-fill/upload`）
-
-核心模块。将多份源文档中的信息自动填入目标模板（xlsx / docx），由 `ai_core` Any2table 流水线驱动。
-
-**接口：**
-- `POST /table-fill/upload`：上传源文档 + 模板 + 用户要求，启动填表任务
-- `POST /table-fill/simple`：简化版，仅上传源文档和字段列表，自动生成 Excel
-
-### 其他接口
-
-| 接口 | 说明 |
-|---|---|
-| `POST /auth/register` | 用户注册 |
-| `POST /auth/login` | 用户登录，返回 JWT Token |
-| `POST /auth/logout` | 登出 |
-| `GET /user/profile` | 获取个人资料 |
-| `PUT /user/profile` | 修改个人资料 |
-| `GET /admin/user/page` | 管理员：分页查询用户 |
-| `GET /admin/statistics` | 管理员：系统统计数据 |
-
-API 完整文档见运行后的 `/docs`（Swagger UI）。
-
-## 技术栈
-
-- **后端框架：** FastAPI + Uvicorn
-- **数据库：** SQLAlchemy（默认 SQLite，可切换）
-- **认证：** JWT（python-jose）
-- **LLM（模块一二）：** LangChain + Zhipu GLM-4 / OpenAI（由 `LLM_PROVIDER` 环境变量控制）
-- **AI 核心（模块三）：** `ai_core` Any2table 多智能体流水线（通用规则提取 + LLM Skill 提取 + HybridRAG 证据重排序）
-
-## 安装与运行
+## 本地部署步骤
 
 ### 1. 安装依赖
 
 ```bash
 pip install -r requirements.txt
-
-# 安装 ai_core
 cd ai_core && pip install -e . && cd ..
 ```
 
@@ -69,74 +33,212 @@ cd ai_core && pip install -e . && cd ..
 在项目根目录创建 `.env` 文件：
 
 ```env
-# 选择 LLM 提供商：zhipu 或 openai
-LLM_PROVIDER=zhipu
+# LLM 提供商选择：openai 或 zhipu
+LLM_PROVIDER=openai
 
-# 智谱 AI（模块一、二）
+# 模块一、二（使用智谱时填写）
 ZHIPU_API_KEY=your_zhipu_api_key
 
-# OpenAI 兼容接口（模块三 / ai_core）
-OPENAI_API_KEY=your_openai_api_key
-OPENAI_BASE_URL=https://your-openai-compatible-endpoint
-OPENAI_MODEL=gpt-4o-mini
+# 模块三 AI 核心（填写任意 OpenAI 兼容接口）
+OPENAI_API_KEY=your_api_key
+OPENAI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+OPENAI_MODEL=qwen-max
 
-# JWT 密钥
-SECRET_KEY=your_secret_key
+# JWT 密钥（随意填写一个字符串）
+SECRET_KEY=any_random_string
 ```
+
+> 注：模块三的规则提取能力**不调用 LLM**，无需 API Key 即可验证基础填表效果。
+> 只有 LLM Skill 增强路径才需要有效 API Key。
 
 ### 3. 启动服务
 
 ```bash
-uvicorn main:app --reload --port 8000
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-访问 `http://localhost:8000/docs` 查看完整接口文档。
+启动成功后访问：`http://localhost:8000/docs`（Swagger UI，可直接操作所有接口）
 
-### 4. Docker 部署
+### 4. Docker 部署（可选）
 
 ```bash
-docker build -t zhihui .
-docker run -p 8000:8000 --env-file .env zhihui
+docker build -t docnexus .
+docker run -p 8000:8000 --env-file .env docnexus
 ```
+
+---
+
+## 测试方法一：Swagger UI（推荐）
+
+浏览器打开 `http://localhost:8000/docs`，所有接口均可在网页上直接测试。
+
+### 第一步：登录获取 Token
+
+找到 `POST /auth/login`，点击 **Try it out**，填入：
+```json
+{ "email": "admin@example.com", "password": "admin123" }
+```
+执行后复制 `access_token`，点击右上角 **Authorize** 填入 `Bearer <token>`。
+
+---
+
+### 模块一：文档格式化
+
+**接口：** `POST /doc-chat/upload`
+
+| 参数 | 说明 |
+|---|---|
+| `command` | 自然语言格式指令 |
+| `document` | 上传任意 `.docx` 文件 |
+
+**指令示例：**
+- `"把第一段文字加粗并设置为红色"`
+- `"将所有标题字号改为16号"`
+- `"把第二段文字居中对齐"`
+
+返回：格式修改后的 Word 文件（自动下载）
+
+---
+
+### 模块二：信息提取
+
+**接口：** `POST /doc-extract/upload`
+
+| 参数 | 说明 |
+|---|---|
+| `file` | 上传文档（docx / txt）|
+| `target_entities` | 要提取的字段，逗号分隔，如 `姓名,年龄,职位` |
+
+返回：JSON 格式的提取结果
+
+---
+
+### 模块三：多智能体填表（核心功能）
+
+**接口：** `POST /table-fill/upload`
+
+测试文件位于项目 `测试集/测试集/包含模板文件/` 目录，共三个场景：
+
+#### 场景 A：COVID-19 数据集（xlsx → xlsx）
+
+```
+模板文件（template）：  COVID-19 模板.xlsx
+源文件（documents）：   COVID-19全球数据集（节选）.xlsx
+                        中国COVID-19新冠疫情情况.docx
+用户要求（user_request）：复制 用户要求.txt 的内容粘贴
+```
+
+预期结果：返回填好的 Excel，包含 2000+ 条国家数据记录。
+
+#### 场景 B：山东环境监测（xlsx → docx 模板）
+
+```
+模板文件（template）：  2025山东省环境空气质量监测数据信息-模板.docx
+源文件（documents）：   山东省环境空气质量监测数据信息202512171921_0.xlsx
+用户要求（user_request）：复制 用户要求.txt 的内容粘贴
+```
+
+预期结果：返回填好的 Word 文档，含三张监测站数据表（德州市/潍坊市/临沂市，共 79 条）。
+
+#### 场景 C：城市经济百强（docx → xlsx）
+
+```
+模板文件（template）：  2025年中国城市经济百强全景报告-模板.xlsx
+源文件（documents）：   2025年中国城市经济百强全景报告.docx（纯叙述型文档）
+用户要求（user_request）：复制 用户要求.txt 的内容粘贴
+```
+
+预期结果：返回填好的 Excel，含 90+ 个城市的 GDP、人口、人均 GDP、预算收入。
+
+---
+
+## 测试方法二：curl 命令行
+
+```bash
+# 1. 登录取 Token
+TOKEN=$(curl -s -X POST http://localhost:8000/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@example.com","password":"admin123"}' \
+  | python -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+
+# 2. 模块一：格式化
+curl -X POST http://localhost:8000/doc-chat/upload \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "command=把第一段文字加粗并设置为红色" \
+  -F "document=@your_document.docx" \
+  --output formatted.docx
+
+# 3. 模块三：填表（山东场景）
+curl -X POST http://localhost:8000/table-fill/upload \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "template=@2025山东省环境空气质量监测数据信息-模板.docx" \
+  -F "documents=@山东省环境空气质量监测数据信息202512171921_0.xlsx" \
+  -F "user_request=完成填表工作，要求提取表格中对应数据" \
+  --output result.docx
+```
+
+---
+
+## 测试方法三：CLI 本地测试（无需启动服务，无需 API Key）
+
+直接调用 ai_core 流水线，验证核心填表逻辑：
+
+```bash
+cd ai_core
+
+# 场景 A：COVID-19
+python -m any2table.cli run \
+  --path "../测试集/测试集/包含模板文件/COVID-19数据集"
+
+# 场景 B：山东环境监测
+python -m any2table.cli run \
+  --path "../测试集/测试集/包含模板文件/2025山东省环境空气质量监测数据信息"
+
+# 场景 C：城市经济百强
+python -m any2table.cli run \
+  --path "../测试集/测试集/包含模板文件/2025年中国城市经济百强全景报告"
+```
+
+输出文件保存在各测试集目录的 `outputs/` 子文件夹中。
+
+### 运行单元测试
+
+```bash
+cd ai_core
+python -m unittest discover -s tests -v
+# 预期：44 个测试全部通过
+```
+
+---
 
 ## 目录结构
 
 ```
 智汇文枢/
-├── main.py              # FastAPI 入口，所有路由
-├── database.py          # SQLAlchemy 模型与数据库初始化
-├── requirements.txt     # Python 依赖
+├── main.py                  # FastAPI 路由入口
+├── database.py              # 数据库模型与初始化
+├── requirements.txt
 ├── Dockerfile
-├── services/
-│   ├── auth.py          # JWT 认证服务
-│   ├── db_service.py    # 数据库操作封装
-│   ├── document_parser.py   # 文档解析（上传预处理）
-│   ├── llm_extractor.py     # 模块二 LLM 提取器
-│   ├── table_filler.py      # 简化版表格填写
-│   └── nlp_command_parser.py
-└── ai_core/             # 模块三：Any2table 多智能体核心
-    ├── engine/          # FastAPI 接入层
-    │   ├── engine.py    # handle_module_1/2/3 入口函数
-    │   └── schemas.py   # Pydantic 输入模型
-    └── src/any2table/   # Any2table 流水线（详见 ai_core/README.md）
+├── .env                     # 环境变量（需自行创建）
+├── services/                # 业务服务层
+├── ai_core/                 # 模块三 AI 核心
+│   ├── engine/              # FastAPI 接入层
+│   └── src/any2table/       # Any2table 流水线
+└── 测试集/                   # 赛题提供的测试数据
+    └── 测试集/包含模板文件/
+        ├── COVID-19数据集/
+        ├── 2025山东省环境空气质量监测数据信息/
+        └── 2025年中国城市经济百强全景报告/
 ```
 
-## ai_core 架构简介
+---
 
-模块三的核心是 `ai_core/src/any2table/` 下的 Any2table 流水线，提供两种编排模式：
+## 技术栈
 
-- **SequentialOrchestrator**：确定性规则链（默认，稳定）
-- **MultiAgentOrchestrator**：7 Agent LangGraph 工作流（可选，语义增强）
-
-主要能力：
-- 通用规则提取：模糊列名匹配（子串 + Bigram Jaccard）、段落 KV 提取，适配任意领域数据
-- LLM Skill 提取：docx → `paragraph-structuring`，xlsx → `table-row-extraction`，语义级字段映射
-- HybridRAG：全量证据按字段相关性重排序，默认启用，复杂任务（3+ 文档 / 5+ 字段）自动激活
-
-详细架构说明见 [ai_core/README.md](ai_core/README.md)。
-
-## 开发说明
-
-- 新增接口：在 `main.py` 中添加路由，复杂业务逻辑放到 `services/` 下
-- 扩展 AI 能力：在 `ai_core/src/any2table/` 中添加新的 Agent、Skill（新增 `SKILL.md` 文件即自动注册）或 RAG backend
-- 运行 ai_core 单元测试：`cd ai_core && python -m unittest discover -s tests -v`
+- **后端：** FastAPI + Uvicorn + SQLAlchemy (SQLite)
+- **认证：** JWT (python-jose)
+- **模块一、二 LLM：** LangChain + Zhipu GLM-4 / OpenAI
+- **模块三 AI 核心：** Any2table 多智能体流水线
+  - 规则提取：模糊列名匹配（Bigram Jaccard）+ 段落 KV 提取 + 城市经济叙述型提取
+  - LLM Skill：paragraph-structuring / table-row-extraction（语义级字段映射）
+  - 编排模式：SequentialOrchestrator / MultiAgentOrchestrator（LangGraph）
