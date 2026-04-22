@@ -103,9 +103,27 @@ def merge_candidates(
     merged: list[CandidateRecord] = []
     rejected: list[CandidateRecord] = []
     warnings: list[str] = []
-    merged_by_key: dict[tuple[tuple[str, str], ...], CandidateRecord] = {}
+    # key → index in merged list (used only for agent→rule merging)
+    merged_by_key: dict[tuple[tuple[str, str], ...], int] = {}
 
-    for candidate in [*rule_candidates, *agent_candidates]:
+    # Rule candidates: each source row is authoritative — never deduplicate among themselves.
+    # Register the LAST rule candidate per key so agent candidates can augment it.
+    for candidate in rule_candidates:
+        rejection_reason = _candidate_rejection_reason(candidate, target_entity_level)
+        if rejection_reason:
+            rejected.append(candidate)
+            warnings.append(
+                f"Rejected {candidate.source_strategy} candidate {candidate.candidate_id} because {rejection_reason}."
+            )
+            continue
+        idx = len(merged)
+        merged.append(candidate)
+        key = _identity_key(candidate)
+        if key:
+            merged_by_key[key] = idx  # overwrite — last rule candidate wins for agent merging
+
+    # Agent candidates: merge into the matching rule candidate, or add as new if no match.
+    for candidate in agent_candidates:
         rejection_reason = _candidate_rejection_reason(candidate, target_entity_level)
         if rejection_reason:
             rejected.append(candidate)
@@ -116,13 +134,13 @@ def merge_candidates(
 
         key = _identity_key(candidate)
         if key and key in merged_by_key:
-            updated = _merge_into_base(merged_by_key[key], candidate)
-            index = merged.index(merged_by_key[key])
-            merged[index] = updated
-            merged_by_key[key] = updated
-            continue
-
-        _register_merged_candidate(merged, merged_by_key, candidate)
+            idx = merged_by_key[key]
+            merged[idx] = _merge_into_base(merged[idx], candidate)
+        else:
+            idx = len(merged)
+            merged.append(candidate)
+            if key:
+                merged_by_key[key] = idx
 
     return CandidateMergeResult(
         merged_candidates=merged,
