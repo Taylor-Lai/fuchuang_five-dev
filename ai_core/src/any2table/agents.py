@@ -19,8 +19,8 @@ from any2table.skills.adapters import validate_structuring_skill_output
 from any2table.skills.executor import execute_skill
 from any2table.skills.renderer import render_skill_prompt
 
-MAX_PARAGRAPH_COUNT = 48
-MAX_PARAGRAPH_CHARS = 12000
+MAX_PARAGRAPH_COUNT = 150
+MAX_PARAGRAPH_CHARS = 40000
 MAX_TABLE_ROWS = 200
 
 

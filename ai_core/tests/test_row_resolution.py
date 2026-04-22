@@ -9,7 +9,7 @@ from any2table.extractors import _extract_records_from_paragraph_evidence, _extr
 
 
 class RowResolutionTests(unittest.TestCase):
-    def test_default_all_dates_without_time_field_appends_date_to_identity(self) -> None:
+    def test_default_all_dates_without_time_field_returns_clean_identity(self) -> None:
         target_table = TargetTableSpec(
             target_table_id="target-table-1",
             logical_name="covid",
@@ -57,9 +57,10 @@ class RowResolutionTests(unittest.TestCase):
 
         records = _extract_records_from_row_evidence(target_table, task_spec, evidence_pack)
 
+        # all_dates returns all rows with clean (un-corrupted) identity field values
         self.assertEqual(len(records), 2)
-        self.assertEqual(records[0].values["国家/地区"], "Albania（2020/7/1）")
-        self.assertEqual(records[1].values["国家/地区"], "Albania（2020/8/31）")
+        self.assertEqual(records[0].values["国家/地区"], "Albania")
+        self.assertEqual(records[1].values["国家/地区"], "Albania")
 
     def test_latest_policy_without_time_field_uses_latest_row_per_identity(self) -> None:
         target_table = TargetTableSpec(
@@ -210,7 +211,8 @@ class RowResolutionTests(unittest.TestCase):
 
         self.assertEqual(len(records), 1)
         record = records[0]
-        self.assertEqual(record.values["国家/地区"], "China（2020/7/27）")
+        # Identity field is not corrupted with date suffix
+        self.assertEqual(record.values["国家/地区"], "China")
         self.assertEqual(record.values["大洲"], "Asia")
         self.assertEqual(record.values["病例数"], 68)
         self.assertTrue(record.values["人口"])

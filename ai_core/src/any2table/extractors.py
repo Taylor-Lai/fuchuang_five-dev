@@ -28,6 +28,21 @@ PER_GDP_PATTERN = re.compile(r"人均\s*GDP[^\d]{0,6}(\d+(?:\.\d+)?)\s*万?元")
 TEST_PATTERN = re.compile(r"(?:核酸)?检测量[^\d]{0,8}(\d+(?:\.\d+)?)\s*(亿|万|份)")
 ADD_CASES_PATTERN = re.compile(r"新增[^\d]{0,6}(\d+)\s*例")
 
+# 城市经济提取模式（每段含城市名+内联数据格式）
+CITY_IN_PARA_PATTERN = re.compile(r"^([\u4e00-\u9fff]{2,5})\s+")
+# GDP：匹配"数字 亿元"与"GDP"关键字在同一句中的两种顺序
+_YI_NUM = r"(\d[\d,]*\.?\d*)\s*亿元"
+GDP_BEFORE_KW = re.compile(rf"{_YI_NUM}[^。\n]{{0,30}}?GDP")   # 数字在 GDP 前
+GDP_AFTER_KW  = re.compile(rf"GDP[^\d\n]{{0,20}}?{_YI_NUM}")   # 数字在 GDP 后
+# 人口：支持"常住人口达 X 万"和"X 万常住人口"两种顺序
+POPULATION_PARA_PATTERN = re.compile(r"(?:常住人口|人口)[^\d]{0,8}?(\d[\d,]*\.?\d*)\s*万")
+POPULATION_REVERSE_PATTERN = re.compile(r"(\d[\d,]*\.?\d*)\s*万(?:的|名)?(?:常住人口|人口)")
+# 人均GDP：同样支持两种顺序
+PER_GDP_PARA_PATTERN = re.compile(r"人均\s*GDP[^\d]{0,12}?(\d[\d,]*\.?\d*)\s*元")
+PER_GDP_REVERSE_PATTERN = re.compile(r"(\d[\d,]*\.?\d*)\s*元(?:[的，。]|$|\s+)[^\n]{0,10}?人均\s*GDP")
+BUDGET_PARA_PATTERN = re.compile(r"(?:一般公共预算收入|财政[一般公共预算]*收入)[^\d]{0,8}?(\d[\d,]*\.?\d*)\s*亿元")
+CITY_RANK_PATTERN = re.compile(r"第\s*(\d+)\s*名|排名?\s*第?\s*(\d+)")
+
 
 def _normalize(value: str) -> str:
     return "".join(str(value).split()).strip().lower()
@@ -337,18 +352,8 @@ def _resolve_row_candidates(target_table, task_spec: TaskSpec, filters: dict[str
 
     policy = getattr(task_spec, "task_policy", "all_dates") or "all_dates"
     if policy == "all_dates":
-        if _target_has_temporal_field(target_table):
-            return candidates
-        resolved: list[dict[str, object]] = []
-        for candidate in candidates:
-            updated = dict(candidate)
-            updated["values"] = _append_temporal_suffix_to_values(target_table, candidate["values"], candidate.get("temporal_value"))
-            if candidate.get("temporal_value") is not None:
-                updated["notes"] = list(candidate.get("notes", [])) + [
-                    f"Expanded all_dates row using {candidate['temporal_value'].isoformat()}."
-                ]
-            resolved.append(updated)
-        return resolved
+        # Return all date rows as-is; appending date to identity field corrupts matching.
+        return list(candidates)
 
     identity_fields = _identity_fields_for_target_table(target_table)
     grouped: dict[tuple[str, ...], list[dict[str, object]]] = {}
@@ -530,16 +535,8 @@ def _extract_cases(text: str) -> int | None:
 
 
 def _apply_paragraph_temporal_policy(target_table, task_spec: TaskSpec, values: dict[str, object], temporal_value: date | None, notes: list[str]) -> tuple[dict[str, object], list[str]]:
-    if temporal_value is None:
-        return dict(values), list(notes)
-    if getattr(task_spec, "task_policy", "all_dates") != "all_dates":
-        return dict(values), list(notes)
-    if _target_has_temporal_field(target_table):
-        return dict(values), list(notes)
-    updated_values = _append_temporal_suffix_to_values(target_table, values, temporal_value)
-    updated_notes = list(notes)
-    updated_notes.append(f"Expanded all_dates paragraph record using {temporal_value.isoformat()}.")
-    return updated_values, updated_notes
+    # Do not append date suffix to identity fields; return values unchanged.
+    return dict(values), list(notes)
 
 
 def _extract_covid_country_record(target_table, task_spec: TaskSpec, evidence_pack: EvidencePack) -> list[StructuredRecord]:
@@ -655,6 +652,151 @@ def _extract_covid_country_record(target_table, task_spec: TaskSpec, evidence_pa
 
 # ── 通用段落提取 ───────────────────────────────────────────────────────────────
 
+def _parse_comma_number(text: str) -> float | None:
+    """解析含逗号分隔符的数字，如 '56,708.71' → 56708.71。"""
+    clean = text.replace(",", "")
+    try:
+        return float(clean)
+    except ValueError:
+        return None
+
+
+def _extract_city_gdp_from_para(text: str) -> float | None:
+    """提取段落中的城市 GDP（亿元），优先选择与 GDP 关键字距离最近的数字。"""
+    candidates: list[tuple[int, float]] = []
+    for pat in (GDP_BEFORE_KW, GDP_AFTER_KW):
+        for m in pat.finditer(text):
+            val = _parse_comma_number(m.group(1))
+            if val is not None:
+                candidates.append((m.start(), val))
+    if not candidates:
+        return None
+    # 预算收入通常有明确标签，排除已被 BUDGET_PARA_PATTERN 匹配的数字
+    budget_spans: set[int] = set()
+    for m in BUDGET_PARA_PATTERN.finditer(text):
+        val = _parse_comma_number(m.group(1))
+        if val is not None:
+            budget_spans.add(round(val, 2))
+    non_budget = [(pos, v) for pos, v in candidates if round(v, 2) not in budget_spans]
+    if non_budget:
+        return non_budget[0][1]
+    return candidates[0][1] if candidates else None
+
+
+def _extract_city_population_from_para(text: str) -> float | None:
+    match = POPULATION_PARA_PATTERN.search(text)
+    if match:
+        return _parse_comma_number(match.group(1))
+    match = POPULATION_REVERSE_PATTERN.search(text)
+    if match:
+        return _parse_comma_number(match.group(1))
+    return None
+
+
+def _extract_city_per_gdp_from_para(text: str) -> int | None:
+    match = PER_GDP_PARA_PATTERN.search(text)
+    if match:
+        val = _parse_comma_number(match.group(1))
+        if val is not None:
+            return int(val)
+    match = PER_GDP_REVERSE_PATTERN.search(text)
+    if match:
+        val = _parse_comma_number(match.group(1))
+        if val is not None:
+            return int(val)
+    return None
+
+
+def _extract_city_budget_from_para(text: str) -> float | None:
+    match = BUDGET_PARA_PATTERN.search(text)
+    if not match:
+        return None
+    return _parse_comma_number(match.group(1))
+
+
+def _extract_city_rank_from_para(text: str) -> int | None:
+    match = CITY_RANK_PATTERN.search(text)
+    if not match:
+        return None
+    for group in match.groups():
+        if group is not None:
+            return int(group)
+    return None
+
+
+def _extract_multi_city_records_from_paragraphs(
+    target_table,
+    task_spec: TaskSpec,
+    para_items: list,
+) -> list[StructuredRecord]:
+    """从段落中提取多城市记录（适用于城市经济百强等叙述型文档）。
+
+    每个段落以城市名开头，后跟 GDP、人口、人均GDP、财政收入等内联数据。
+    """
+    target_fields = [f.field_name for f in target_table.schema]
+    city_field = next((f for f in target_fields if "城市" in f or "城市名" in f), None)
+    if city_field is None:
+        return []
+
+    # 为已知经济字段建立提取函数映射
+    field_extractors: dict[str, object] = {}
+    for fn in target_fields:
+        if fn == city_field:
+            continue
+        norm = _normalize(fn)
+        if ("gdp" in norm or "生产总值" in norm or "经济总量" in norm) and "人均" not in norm:
+            field_extractors[fn] = _extract_city_gdp_from_para
+        elif "人均" in norm and ("gdp" in norm or "收入" in norm):
+            field_extractors[fn] = _extract_city_per_gdp_from_para
+        elif "人口" in norm and "人均" not in norm:
+            field_extractors[fn] = _extract_city_population_from_para
+        elif "预算" in norm or ("财政" in norm and "收入" in norm):
+            field_extractors[fn] = _extract_city_budget_from_para
+        elif "排名" in norm or "名次" in norm:
+            field_extractors[fn] = _extract_city_rank_from_para
+
+    if not field_extractors:
+        return []
+
+    records: list[StructuredRecord] = []
+    for idx, item in enumerate(para_items):
+        text = item.content.strip()
+        if not text:
+            continue
+        city_match = CITY_IN_PARA_PATTERN.match(text)
+        if not city_match:
+            continue
+        # 段落须含 GDP 关键字且附近有数字+亿元
+        if not GDP_BEFORE_KW.search(text) and not GDP_AFTER_KW.search(text):
+            continue
+        city_name = city_match.group(1)
+        values: dict[str, object] = {f: None for f in target_fields}
+        values[city_field] = city_name
+        field_sources: dict[str, list[str]] = {city_field: [item.evidence_id]}
+        for fn, extractor in field_extractors.items():
+            val = extractor(text)  # type: ignore[operator]
+            if val is not None:
+                values[fn] = val
+                field_sources[fn] = [item.evidence_id]
+
+        has_data = any(v is not None for fn, v in values.items() if fn != city_field)
+        if not has_data:
+            continue
+        status = "partial" if any(v is None for v in values.values()) else "ready"
+        records.append(
+            StructuredRecord(
+                record_id=f"{target_table.target_table_id}#city-{idx}",
+                target_table_id=target_table.target_table_id,
+                values=values,
+                field_sources=field_sources,
+                confidence=0.7,
+                status=status,
+                notes=["Multi-city inline paragraph extraction."],
+            )
+        )
+    return records
+
+
 def _extract_kv_from_paragraph(text: str, target_fields: list[str]) -> dict[str, object]:
     """在段落文本中查找"字段名：值"/"字段名: 值"显式 KV 标注。"""
     result: dict[str, object] = {}
@@ -703,6 +845,12 @@ def _extract_records_from_paragraph_evidence(target_table, task_spec: TaskSpec, 
     ]
     if not para_items:
         return []
+
+    # 城市多行提取路径：目标含"城市"字段且文档为叙述型时优先使用
+    if any("城市" in f for f in target_fields):
+        city_records = _extract_multi_city_records_from_paragraphs(target_table, task_spec, para_items)
+        if city_records:
+            return city_records
 
     accumulated: dict[str, object] = {}
     field_sources: dict[str, list[str]] = {}
