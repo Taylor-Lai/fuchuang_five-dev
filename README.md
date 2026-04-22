@@ -57,7 +57,7 @@ SECRET_KEY=any_random_string
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-启动成功后访问：`http://localhost:8000/docs`（Swagger UI，可直接操作所有接口）
+启动成功后访问：`http://localhost:8000/docs`（Swagger UI，可直接操作所有接口），但Swagger UI系统存在bug，推荐测试时使用下面具体的测试方法进行。
 
 ### 4. Docker 部署（可选）
 
@@ -70,38 +70,16 @@ docker run -p 8000:8000 --env-file .env docnexus
 
 ## 测试方法一：Postman（推荐）
 
-使用 Postman 测试所有接口，步骤如下：
+使用 Postman 测试所有核心接口，步骤如下：
 
-### 第一步：登录获取 Token
-
-1. 打开 Postman，创建一个新的请求
-2. 方法：`POST`
-3. URL：`http://localhost:8000/auth/login`
-4. 选择 `Body` → `raw` → `JSON`
-5. 输入：
-   ```json
-   { "email": "admin@example.com", "password": "admin123" }
-   ```
-6. 点击 `Send`，复制返回的 `access_token`
-7. 在 Postman 中创建一个新的环境变量 `token`，值为获取到的 `access_token`
-
-### 第二步：设置认证
-
-1. 点击 Postman 右上角的环境选择器，选择你创建的环境
-2. 在请求的 `Authorization` 选项卡中，选择 `Bearer Token`
-3. 在 `Token` 字段中输入 `{{token}}`
-
----
-
-### 模块一：文档格式化
+### 模块一：智能操作文档(自然语言)
 
 **接口：** `POST /doc-chat/upload`
 
 1. 方法：`POST`
 2. URL：`http://localhost:8000/doc-chat/upload`
-3. `Authorization`：使用上述设置的 Bearer Token
-4. `Body` → `form-data`
-5. 添加参数：
+3. `Body` → `form-data`
+4. 添加参数：
    - `command`：自然语言格式指令
    - `document`：选择 `File` 类型，上传任意 `.docx` 文件
 
@@ -120,9 +98,8 @@ docker run -p 8000:8000 --env-file .env docnexus
 
 1. 方法：`POST`
 2. URL：`http://localhost:8000/doc-extract/upload`
-3. `Authorization`：使用上述设置的 Bearer Token
-4. `Body` → `form-data`
-5. 添加参数：
+3. `Body` → `form-data`
+4. 添加参数：
    - `file`：选择 `File` 类型，上传文档（docx / txt）
    - `target_entities`：要提取的字段，逗号分隔，如 `姓名,年龄,职位`
 
@@ -136,14 +113,11 @@ docker run -p 8000:8000 --env-file .env docnexus
 
 1. 方法：`POST`
 2. URL：`http://localhost:8000/table-fill/upload`
-3. `Authorization`：使用上述设置的 Bearer Token
-4. `Body` → `form-data`
-5. 添加参数：
+3. `Body` → `form-data`
+4. 添加参数：
    - `template`：选择 `File` 类型，上传模板文件
    - `documents`：选择 `File` 类型，上传源文档（可多次添加）
    - `user_request`：用户要求（可选）
-
-测试文件位于项目 `测试集/测试集/包含模板文件/` 目录，共三个场景：
 
 #### 场景 A：COVID-19 数据集（xlsx → xlsx）
 
@@ -181,22 +155,14 @@ docker run -p 8000:8000 --env-file .env docnexus
 ## 测试方法二：curl 命令行
 
 ```bash
-# 1. 登录取 Token
-TOKEN=$(curl -s -X POST http://localhost:8000/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"admin@example.com","password":"admin123"}' \
-  | python -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
-
-# 2. 模块一：格式化
+# 1. 模块一：格式化
 curl -X POST http://localhost:8000/doc-chat/upload \
-  -H "Authorization: Bearer $TOKEN" \
   -F "command=把第一段文字加粗并设置为红色" \
   -F "document=@your_document.docx" \
   --output formatted.docx
 
-# 3. 模块三：填表（山东场景）
+# 2. 模块三：填表（山东场景）
 curl -X POST http://localhost:8000/table-fill/upload \
-  -H "Authorization: Bearer $TOKEN" \
   -F "template=@2025山东省环境空气质量监测数据信息-模板.docx" \
   -F "documents=@山东省环境空气质量监测数据信息202512171921_0.xlsx" \
   -F "user_request=完成填表工作，要求提取表格中对应数据" \
@@ -248,13 +214,9 @@ python -m unittest discover -s tests -v
 ├── .env                     # 环境变量（需自行创建）
 ├── services/                # 业务服务层
 ├── ai_core/                 # 模块三 AI 核心
-│   ├── engine/              # FastAPI 接入层
-│   └── src/any2table/       # Any2table 流水线
-└── 测试集/                   # 赛题提供的测试数据
-    └── 测试集/包含模板文件/
-        ├── COVID-19数据集/
-        ├── 2025山东省环境空气质量监测数据信息/
-        └── 2025年中国城市经济百强全景报告/
+    ├── engine/              # FastAPI 接入层
+    └── src/any2table/       # Any2table 流水线
+
 ```
 
 ---
