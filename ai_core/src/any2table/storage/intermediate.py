@@ -1,4 +1,4 @@
-﻿"""Intermediate artifact dumping for parsed documents and schema outputs."""
+"""Intermediate artifact dumping for parsed documents and schema outputs."""
 
 from __future__ import annotations
 

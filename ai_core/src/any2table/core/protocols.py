@@ -1,4 +1,4 @@
-﻿"""Core component protocols."""
+"""Core component protocols."""
 
 from __future__ import annotations
 

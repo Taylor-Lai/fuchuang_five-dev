@@ -1,4 +1,4 @@
-﻿"""Build candidate records from rule outputs and agent skill outputs."""
+"""Build candidate records from rule outputs and agent skill outputs."""
 
 from __future__ import annotations
 

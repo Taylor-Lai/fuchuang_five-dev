@@ -1,4 +1,4 @@
-﻿"""Any2table package."""
+"""Any2table package."""
 
 __all__ = ["__version__"]
 

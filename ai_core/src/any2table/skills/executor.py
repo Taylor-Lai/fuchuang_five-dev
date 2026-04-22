@@ -1,4 +1,4 @@
-﻿"""Execute local skills with an optional LLM backend."""
+"""Execute local skills with an optional LLM backend."""
 
 from __future__ import annotations
 

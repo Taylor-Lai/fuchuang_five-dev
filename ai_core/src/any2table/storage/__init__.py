@@ -1,4 +1,4 @@
-﻿"""Intermediate artifact helpers."""
+"""Intermediate artifact helpers."""
 
 from any2table.storage.intermediate import build_fill_plan, dump_intermediate_artifacts
 

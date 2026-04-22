@@ -1,4 +1,4 @@
-﻿"""Sequential and multi-agent orchestrators."""
+"""Sequential and multi-agent orchestrators."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-﻿"""Candidate records used between extraction and final write-back."""
+"""Candidate records used between extraction and final write-back."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-﻿"""Writers."""
+"""Writers."""
 
 from __future__ import annotations
 

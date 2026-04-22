@@ -1,4 +1,4 @@
-﻿"""Candidate merging helpers."""
+"""Candidate merging helpers."""
 
 from any2table.merging.merger import CandidateMergeResult, merge_candidates
 

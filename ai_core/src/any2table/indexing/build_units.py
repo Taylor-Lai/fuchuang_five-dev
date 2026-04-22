@@ -1,4 +1,4 @@
-﻿"""Build retrieval-ready units from canonical documents."""
+"""Build retrieval-ready units from canonical documents."""
 
 from __future__ import annotations
 

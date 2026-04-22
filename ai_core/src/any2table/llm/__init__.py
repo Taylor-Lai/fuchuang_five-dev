@@ -1,4 +1,4 @@
-﻿"""LLM support for Any2table."""
+"""LLM support for Any2table."""
 
 from any2table.llm.client import OpenAiLlmClient, build_llm_client
 from any2table.llm.models import LlmResponse

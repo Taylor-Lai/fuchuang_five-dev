@@ -1,4 +1,4 @@
-﻿"""Lightweight multi-agent nodes for the first orchestration pass."""
+"""Lightweight multi-agent nodes for the first orchestration pass."""
 
 from __future__ import annotations
 

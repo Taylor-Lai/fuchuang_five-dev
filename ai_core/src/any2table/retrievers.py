@@ -1,4 +1,4 @@
-﻿"""Retrievers."""
+"""Retrievers."""
 
 from __future__ import annotations
 

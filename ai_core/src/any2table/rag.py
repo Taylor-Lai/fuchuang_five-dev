@@ -1,4 +1,4 @@
-﻿"""RAG backend abstraction for optional retrieval augmentation."""
+"""RAG backend abstraction for optional retrieval augmentation."""
 
 from __future__ import annotations
 

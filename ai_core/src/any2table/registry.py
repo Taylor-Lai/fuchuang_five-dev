@@ -1,4 +1,4 @@
-﻿"""Runtime component registry."""
+"""Runtime component registry."""
 
 from __future__ import annotations
 

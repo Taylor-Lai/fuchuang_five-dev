@@ -1,4 +1,4 @@
-﻿"""Compute engines."""
+"""Compute engines."""
 
 from __future__ import annotations
 

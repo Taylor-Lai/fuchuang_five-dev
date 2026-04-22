@@ -1,4 +1,4 @@
-﻿"""Template analyzers."""
+"""Template analyzers."""
 
 from __future__ import annotations
 

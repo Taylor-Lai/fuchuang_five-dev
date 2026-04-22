@@ -1,4 +1,4 @@
-﻿"""Configuration defaults for Any2table."""
+"""Configuration defaults for Any2table."""
 
 from __future__ import annotations
 

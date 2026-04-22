@@ -1,4 +1,4 @@
-﻿"""Runtime state and graph orchestration."""
+"""Runtime state and graph orchestration."""
 
 from __future__ import annotations
 

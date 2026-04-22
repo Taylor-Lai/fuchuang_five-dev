@@ -1,4 +1,4 @@
-﻿"""Task planners."""
+"""Task planners."""
 
 from __future__ import annotations
 

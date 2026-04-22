@@ -1,4 +1,4 @@
-﻿"""OpenAI-compatible LLM client."""
+"""OpenAI-compatible LLM client."""
 
 from __future__ import annotations
 
