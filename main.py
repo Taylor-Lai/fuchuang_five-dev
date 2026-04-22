@@ -675,16 +675,25 @@ async def table_fill_upload(
             doc_filenames = [doc.filename for doc in documents]
             filename_str = f"{template.filename} + {', '.join(doc_filenames)}"
             
+            output_path = result.output_excel_path
+            output_ext = Path(output_path).suffix.lower()
+            if output_ext == ".docx":
+                media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                file_type = "docx"
+            else:
+                media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                file_type = "xlsx"
+
             record = DBService.save_extraction(
                 db=db,
                 filename=filename_str,
-                file_type="xlsx",
+                file_type=file_type,
                 fields_requested=[],
-                extracted_data={"output_path": result.output_excel_path},
-                content_preview=f"多源数据融合，生成文件：{result.output_excel_path}",
+                extracted_data={"output_path": output_path},
+                content_preview=f"多源数据融合，生成文件：{output_path}",
                 status="success",
             )
-            
+
             def cleanup_temp():
                 import shutil
                 try:
@@ -695,13 +704,12 @@ async def table_fill_upload(
 
             background_tasks.add_task(cleanup_temp)
 
-            # 处理中文文件名编码
             filename = f"filled_{template.filename}"
             encoded_filename = quote(filename)
-            print(f"✅ 生成的输出文件路径: {result.output_excel_path}")
+            print(f"✅ 生成的输出文件路径: {output_path}")
             return FileResponse(
-                result.output_excel_path,
-                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                output_path,
+                media_type=media_type,
                 headers={
                     "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
                 }

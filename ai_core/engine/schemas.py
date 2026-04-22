@@ -45,7 +45,7 @@ class Mod3_FusionInput(BaseModel):
 class Mod3_FusionOutput(BaseModel):
     status: str = Field(..., description="success 或 failed")
     task_id: str = Field(...)
-    output_excel_path: Optional[str] = Field(None, description="生成的目标 Excel 文件路径")
+    output_excel_path: Optional[str] = Field(None, description="生成的目标文件路径（xlsx 或 docx）")
     warnings: List[str] = Field(default_factory=list, description="算法产生的警告信息")
     error_msg: Optional[str] = Field(None, description="报错信息")
 
