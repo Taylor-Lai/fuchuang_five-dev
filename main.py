@@ -40,7 +40,7 @@ app = FastAPI(title="文档理解系统", version="1.0.0")
 @app.on_event("startup")
 def startup_event():
     init_db()
-    print("🚀 服务启动完成")
+    print("[START] 服务启动完成")
 
 
 # ==================== 数据模型 ====================
@@ -87,7 +87,7 @@ class UserProfileUpdate(BaseModel):
 @app.get("/")
 async def root():
     return {
-        "message": "🚀 文档理解系统运行中",
+        "message": "[START] 文档理解系统运行中",
         "version": "1.0.0",
         "docs": "/docs",
         "features": ["文档解析", "AI 提取", "自动填表", "历史记录"],
@@ -139,15 +139,15 @@ async def fill_table_simple(
         text_content = parse_result["content"]
 
         # 2. 处理字段（支持中英文逗号）
-        # ✅ 关键修复：确保正确分割
+        # [OK] 关键修复：确保正确分割
         fields_list = [
             f.strip() for f in fields.replace("，", ",").split(",") if f.strip()
         ]
 
-        print(f"📋 原始 fields: {fields}")
-        print(f"📋 处理后的字段列表：{fields_list}")
-        print(f"📋 字段列表类型：{type(fields_list)}")
-        print(f"📋 字段数量：{len(fields_list)}")
+        print(f"原始 fields: {fields}")
+        print(f"处理后的字段列表：{fields_list}")
+        print(f"字段列表类型：{type(fields_list)}")
+        print(f"字段数量：{len(fields_list)}")
 
         if not fields_list:
             raise HTTPException(400, "请至少指定一个填写字段")
@@ -158,10 +158,10 @@ async def fill_table_simple(
         if "error" in extracted_data:
             raise HTTPException(500, f"AI 提取失败：{extracted_data['error']}")
 
-        print(f"📦 提取的数据：{extracted_data}")
+        print(f"提取的数据：{extracted_data}")
 
         # 4. 自动生成模板并填充
-        print(f"📊 创建模板，字段：{fields_list}")
+        print(f"创建模板，字段：{fields_list}")
         template_bytes = TableFiller.create_template_from_fields(fields_list)
 
         filled_file = TableFiller.fill_template(
@@ -196,7 +196,7 @@ async def fill_table_simple(
     except Exception as e:
         import traceback
 
-        print(f"❌ 填表失败：\n{traceback.format_exc()}")
+        print(f"[ERR] 填表失败：\n{traceback.format_exc()}")
         raise HTTPException(500, f"填表失败：{str(e)}")
 
 
@@ -512,9 +512,9 @@ async def doc_chat_upload(
                 import shutil
                 try:
                     shutil.rmtree(temp_dir)
-                    print(f"🧹 已清理临时目录: {temp_dir}")
+                    print(f"[CLEAN] 已清理临时目录: {temp_dir}")
                 except Exception as e:
-                    print(f"⚠️ 清理失败: {e}")
+                    print(f"[WARN] 清理失败: {e}")
 
             background_tasks.add_task(cleanup_temp)
 
@@ -582,9 +582,9 @@ async def doc_extract_upload(
             import shutil
             try:
                 shutil.rmtree(temp_dir)
-                print(f"🧹 已清理临时目录: {temp_dir}")
+                print(f"[CLEAN] 已清理临时目录: {temp_dir}")
             except Exception as e:
-                print(f"⚠️ 清理失败: {e}")
+                print(f"[WARN] 清理失败: {e}")
 
         background_tasks.add_task(cleanup_temp)
         
@@ -698,15 +698,15 @@ async def table_fill_upload(
                 import shutil
                 try:
                     shutil.rmtree(workspace_dir)
-                    print(f"🧹 已清理临时目录: {workspace_dir}")
+                    print(f"[CLEAN] 已清理临时目录: {workspace_dir}")
                 except Exception as e:
-                    print(f"⚠️ 清理失败: {e}")
+                    print(f"[WARN] 清理失败: {e}")
 
             background_tasks.add_task(cleanup_temp)
 
             filename = f"filled_{template.filename}"
             encoded_filename = quote(filename)
-            print(f"✅ 生成的输出文件路径: {output_path}")
+            print(f"[OK] 生成的输出文件路径: {output_path}")
             return FileResponse(
                 output_path,
                 media_type=media_type,
@@ -1004,7 +1004,7 @@ async def get_admin_statistics(
     
     if inactive_users:
         db.commit()
-        print(f"🧹 自动清理 {len(inactive_users)} 个超时未活动的用户")
+        print(f"[CLEAN] 自动清理 {len(inactive_users)} 个超时未活动的用户")
     
     # 统计总用户数
     total_users = db.query(User).count()

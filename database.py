@@ -106,7 +106,7 @@ def get_db():
 def init_db():
     """初始化数据库（创建表）"""
     Base.metadata.create_all(bind=engine)
-    print("✅ 数据库初始化成功")
+    print("[OK] 数据库初始化成功")
 
     # 执行数据库迁移
     migrate_db()
@@ -125,7 +125,7 @@ def create_initial_user():
         # 检查是否已有用户
         existing = db.query(User).first()
         if existing:
-            print("ℹ️  已存在用户，跳过创建")
+            print("已存在用户，跳过创建")
             return
 
         # 创建管理员
@@ -137,7 +137,7 @@ def create_initial_user():
         )
         db.add(admin)
         db.commit()
-        print("✅ 初始管理员创建成功 (用户名: admin, 密码: admin123)")
+        print("[OK] 初始管理员创建成功 (用户名: admin, 密码: admin123)")
     finally:
         db.close() 
 
@@ -164,7 +164,7 @@ def migrate_db():
                     break
             
             if accountStatus_type and "BOOLEAN" in accountStatus_type:
-                print("ℹ️  开始将 accountStatus 字段从布尔值转换为字符串...")
+                print("开始将 accountStatus 字段从布尔值转换为字符串...")
                 try:
                     # 1. 创建临时表
                     db.execute(text("""
@@ -209,18 +209,18 @@ def migrate_db():
                     db.execute(text("CREATE UNIQUE INDEX ix_users_username ON users (username)"))
                     db.execute(text("CREATE UNIQUE INDEX ix_users_email ON users (email)"))
                     
-                    print("✅ 成功将 accountStatus 字段从布尔值转换为字符串")
+                    print("[OK] 成功将 accountStatus 字段从布尔值转换为字符串")
                     
                     # 更新 columns 列表
                     result = db.execute(text("PRAGMA table_info(users)"))
                     columns = [column[1] for column in result.fetchall()]
                 except Exception as e:
-                    print(f"❌ 转换 accountStatus 字段失败：{str(e)}")
+                    print(f"[ERR] 转换 accountStatus 字段失败：{str(e)}")
                     db.rollback()
                     raise
         elif "is_active" in columns:
             # 重命名 is_active 列为 accountStatus（SQLite 不支持直接重命名，需要重建表）
-            print("ℹ️  开始迁移 is_active 列为 accountStatus...")
+            print("开始迁移 is_active 列为 accountStatus...")
             try:
                 # 1. 创建临时表
                 db.execute(text("""
@@ -265,53 +265,53 @@ def migrate_db():
                 db.execute(text("CREATE UNIQUE INDEX ix_users_username ON users (username)"))
                 db.execute(text("CREATE UNIQUE INDEX ix_users_email ON users (email)"))
                 
-                print("✅ 成功将 is_active 列重命名为 accountStatus")
+                print("[OK] 成功将 is_active 列重命名为 accountStatus")
                 
                 # 更新 columns 列表
                 result = db.execute(text("PRAGMA table_info(users)"))
                 columns = [column[1] for column in result.fetchall()]
             except Exception as e:
-                print(f"❌ 迁移 is_active 列失败：{str(e)}")
+                print(f"[ERR] 迁移 is_active 列失败：{str(e)}")
                 db.rollback()
                 raise
         
         # 如果字段不存在，添加它们
         if "nickname" not in columns:
             db.execute(text("ALTER TABLE users ADD COLUMN nickname TEXT"))
-            print("✅ 添加 nickname 字段成功")
+            print("[OK] 添加 nickname 字段成功")
         
         if "gender" not in columns:
             db.execute(text("ALTER TABLE users ADD COLUMN gender TEXT"))
-            print("✅ 添加 gender 字段成功")
+            print("[OK] 添加 gender 字段成功")
         
         if "phone" not in columns:
             db.execute(text("ALTER TABLE users ADD COLUMN phone TEXT"))
-            print("✅ 添加 phone 字段成功")
+            print("[OK] 添加 phone 字段成功")
         
         # 新增字段
         if "role" not in columns:
             db.execute(text("ALTER TABLE users ADD COLUMN role TEXT DEFAULT '普通用户'"))
-            print("✅ 添加 role 字段成功")
+            print("[OK] 添加 role 字段成功")
         
         if "last_login_time" not in columns:
             db.execute(text("ALTER TABLE users ADD COLUMN last_login_time DATETIME"))
-            print("✅ 添加 last_login_time 字段成功")
+            print("[OK] 添加 last_login_time 字段成功")
         
         if "last_login_ip" not in columns:
             db.execute(text("ALTER TABLE users ADD COLUMN last_login_ip TEXT"))
-            print("✅ 添加 last_login_ip 字段成功")
+            print("[OK] 添加 last_login_ip 字段成功")
         
         if "login_status" not in columns:
             db.execute(text("ALTER TABLE users ADD COLUMN login_status TEXT DEFAULT '离线'"))
-            print("✅ 添加 login_status 字段成功")
+            print("[OK] 添加 login_status 字段成功")
         
         if "remark" not in columns:
             db.execute(text("ALTER TABLE users ADD COLUMN remark TEXT"))
-            print("✅ 添加 remark 字段成功")
+            print("[OK] 添加 remark 字段成功")
         
         if "last_activity_time" not in columns:
             db.execute(text("ALTER TABLE users ADD COLUMN last_activity_time DATETIME"))
-            print("✅ 添加 last_activity_time 字段成功")
+            print("[OK] 添加 last_activity_time 字段成功")
         
         # 将指定邮箱的用户设置为管理员
         admin_emails = ["admin@example.com", "1234567890@qq.com"]
@@ -321,14 +321,14 @@ def migrate_db():
                 {"email": email}
             )
             if result.rowcount > 0:
-                print(f"✅ 将 {email} 设置为管理员")
+                print(f"[OK] 将 {email} 设置为管理员")
             else:
-                print(f"⚠️ 未找到邮箱为 {email} 的用户")
+                print(f"[WARN] 未找到邮箱为 {email} 的用户")
         
         db.commit()
-        print("✅ 数据库迁移完成")
+        print("[OK] 数据库迁移完成")
     except Exception as e:
-        print(f"❌ 迁移失败：{str(e)}")
+        print(f"[ERR] 迁移失败：{str(e)}")
         db.rollback()
     finally:
         db.close()
