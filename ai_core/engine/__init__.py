@@ -11,6 +11,9 @@ if src_dir.exists() and str(src_dir) not in sys.path:
 
 from .schemas import *
 from .engine import (
+    handle_document_operation,
+    handle_information_extraction,
+    handle_table_filling,
     handle_module_1_format,
     handle_module_2_extract,
     handle_module_3_fusion
@@ -21,6 +24,13 @@ __all__ = [
     'Mod1_FormatInput', 'Mod1_FormatOutput',
     'Mod2_ExtractInput', 'Mod2_ExtractOutput',
     'Mod3_FusionInput', 'Mod3_FusionOutput',
+    'DocumentOperationInput', 'DocumentOperationOutput',
+    'InformationExtractionInput', 'InformationExtractionOutput',
+    'TableFillingInput', 'TableFillingOutput',
+    # Canonical handlers
+    'handle_document_operation',
+    'handle_information_extraction',
+    'handle_table_filling',
     # Handlers
     'handle_module_1_format',
     'handle_module_2_extract',

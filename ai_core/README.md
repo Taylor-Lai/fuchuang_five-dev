@@ -169,15 +169,20 @@ cd ai_core
 python -m unittest discover -s tests -v
 ```
 
-共 11 个单元测试，覆盖候选合并、RAG backend、行解析与日期策略。
+单元测试覆盖候选合并、RAG backend、行解析、日期策略、确定性计算与校验报告。
 
 ## 10. 项目结构
 
 ```
 ai_core/
 ├── engine/                  # FastAPI 接入层（供 main.py 调用）
-│   ├── engine.py            # handle_module_3_fusion 等入口函数
+│   ├── engine.py            # 兼容旧 handle_module_* 入口的 facade
 │   └── schemas.py
+├── src/docnexus_ai/
+│   ├── document_operations.py    # 模块一：文档智能操作
+│   ├── information_extraction.py # 模块二：非结构化信息抽取
+│   ├── table_filling.py          # 模块三：多源自动填表接入
+│   └── llm.py                    # 三个模块共享的 LLM 配置
 ├── src/any2table/
 │   ├── agents.py            # 7 个 Agent 实现
 │   ├── app.py               # build_registry / build_orchestrator

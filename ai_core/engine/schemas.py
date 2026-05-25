@@ -57,3 +57,13 @@ class Mod3_FusionOutput(BaseModel):
                 "user_request": "请填写中国2020年7月的病例数据"
             }
         }
+
+
+# New canonical names for the three AI domains.  The Mod1/2/3 names stay in
+# place for backend compatibility.
+DocumentOperationInput = Mod1_FormatInput
+DocumentOperationOutput = Mod1_FormatOutput
+InformationExtractionInput = Mod2_ExtractInput
+InformationExtractionOutput = Mod2_ExtractOutput
+TableFillingInput = Mod3_FusionInput
+TableFillingOutput = Mod3_FusionOutput
