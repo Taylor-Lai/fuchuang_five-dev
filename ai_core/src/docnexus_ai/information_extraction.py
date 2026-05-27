@@ -191,12 +191,23 @@ def _read_document_text(file_path: str) -> str:
         raise FileNotFoundError(f"文件不存在: {file_path}")
     if file_path.endswith(".docx"):
         doc = Document(file_path)
-        return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+        parts = [p.text for p in doc.paragraphs if p.text.strip()]
+        for table_index, table in enumerate(doc.tables):
+            parts.append(f"[表格 {table_index + 1}]")
+            for row in table.rows:
+                cells = [cell.text.strip() for cell in row.cells]
+                if any(cells):
+                    parts.append(" | ".join(cells))
+        return "\n".join(parts)
     if file_path.endswith(".xlsx"):
         import pandas as pd
 
-        df = pd.read_excel(file_path)
-        return df.to_markdown(index=False)
+        sheets = pd.read_excel(file_path, sheet_name=None)
+        parts = []
+        for sheet_name, df in sheets.items():
+            parts.append(f"[工作表 {sheet_name}]")
+            parts.append(df.to_markdown(index=False))
+        return "\n\n".join(parts)
 
     for encoding in ("utf-8", "gbk", "utf-16"):
         try:

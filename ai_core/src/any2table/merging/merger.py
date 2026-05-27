@@ -16,7 +16,7 @@ class CandidateMergeResult:
 
 
 def _identity_key(candidate: CandidateRecord) -> tuple[tuple[str, str], ...]:
-    pairs: list[tuple[str, str]] = []
+    pairs: list[tuple[str, str]] = [("__target_table_id__", candidate.target_table_id)]
     for key, value in sorted(candidate.row_identity.items()):
         pairs.append((key, "" if value is None else str(value)))
     return tuple(pairs)

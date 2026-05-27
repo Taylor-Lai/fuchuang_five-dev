@@ -360,6 +360,42 @@ class TestFileReading(unittest.TestCase):
         self.assertIn("第一段", text)
         self.assertIn("第二段", text)
 
+    def test_read_docx_includes_table_cells(self):
+        """测试 docx 表格内容会进入抽取文本"""
+        from docnexus_ai.information_extraction import _read_document_text
+
+        doc = Document()
+        doc.add_paragraph("项目说明")
+        table = doc.add_table(rows=2, cols=2)
+        table.cell(0, 0).text = "负责人"
+        table.cell(0, 1).text = "张三"
+        table.cell(1, 0).text = "预算"
+        table.cell(1, 1).text = "100万元"
+        path = os.path.join(self.temp_dir, "table.docx")
+        doc.save(path)
+
+        text = _read_document_text(path)
+
+        self.assertIn("项目说明", text)
+        self.assertIn("负责人 | 张三", text)
+        self.assertIn("预算 | 100万元", text)
+
+    def test_read_xlsx_includes_all_sheets(self):
+        """测试 xlsx 多个工作表都会进入抽取文本"""
+        from docnexus_ai.information_extraction import _read_document_text
+        import pandas as pd
+
+        path = os.path.join(self.temp_dir, "multi.xlsx")
+        with pd.ExcelWriter(path) as writer:
+            pd.DataFrame([{"字段": "项目", "值": "A"}]).to_excel(writer, sheet_name="基本信息", index=False)
+            pd.DataFrame([{"字段": "负责人", "值": "张三"}]).to_excel(writer, sheet_name="人员", index=False)
+
+        text = _read_document_text(path)
+
+        self.assertIn("[工作表 基本信息]", text)
+        self.assertIn("[工作表 人员]", text)
+        self.assertIn("张三", text)
+
     def test_read_txt_utf8(self):
         """测试 UTF-8 文本文件读取"""
         path = os.path.join(self.temp_dir, "test.txt")

@@ -7,6 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from any2table.candidates.builders import (
     build_agent_candidates_from_skill_result,
     infer_target_entity_level,
+    _filter_values_to_schema,
 )
 from any2table.candidates.models import CandidateRecord
 from any2table.core.models import (
@@ -178,6 +179,129 @@ class CandidateMergerTests(unittest.TestCase):
         self.assertEqual(merged.source_strategy, "merged")
         self.assertIn("rule-1", merged.metadata["merged_from"])
         self.assertIn("agent-3", merged.metadata["merged_from"])
+
+    def test_merge_keeps_same_identity_separate_across_tables(self) -> None:
+        rule_candidate = CandidateRecord(
+            candidate_id="rule-city",
+            target_table_id="table-a",
+            row_identity={"城市": "北京"},
+            values={"城市": "北京", "GDP": 1200},
+            field_evidence={},
+            confidence=0.7,
+            source_strategy="rule",
+            entity_level="city",
+        )
+        agent_candidate = CandidateRecord(
+            candidate_id="agent-city",
+            target_table_id="table-b",
+            row_identity={"城市": "北京"},
+            values={"城市": "北京", "人口": 2000},
+            field_evidence={},
+            confidence=0.9,
+            source_strategy="agent",
+            entity_level="city",
+        )
+
+        result = merge_candidates(
+            rule_candidates=[rule_candidate],
+            agent_candidates=[agent_candidate],
+            target_entity_level="city",
+        )
+
+        self.assertEqual(len(result.merged_candidates), 2)
+        self.assertEqual(
+            {candidate.target_table_id for candidate in result.merged_candidates},
+            {"table-a", "table-b"},
+        )
+
+    def test_filter_values_maps_grouped_headers_and_aliases(self) -> None:
+        values = _filter_values_to_schema(
+            {"城市名": "北京", "GDP": 1200, "常住人口": 2000},
+            ["基础信息-城市", "经济指标-GDP", "经济指标-人口"],
+        )
+
+        self.assertEqual(values["基础信息-城市"], "北京")
+        self.assertEqual(values["经济指标-GDP"], 1200)
+        self.assertEqual(values["经济指标-人口"], 2000)
+
+    def test_agent_candidates_are_built_for_matching_second_table(self) -> None:
+        template_spec = TemplateSpec(
+            template_doc_id="template-doc",
+            target_tables=[
+                TargetTableSpec(
+                    target_table_id="table-a",
+                    logical_name="unrelated",
+                    schema=[FieldSpec("a1", "项目", "项目", "string", False)],
+                ),
+                TargetTableSpec(
+                    target_table_id="table-b",
+                    logical_name="city",
+                    schema=[
+                        FieldSpec("b1", "基础信息-城市", "基础信息城市", "string", True),
+                        FieldSpec("b2", "经济指标-GDP", "经济指标gdp", "number", False),
+                    ],
+                ),
+            ],
+        )
+        task_spec = TaskSpec("task-2", "fill_table", "template-doc")
+        skill_result = {
+            "records": [
+                {
+                    "values": {"城市名": "北京", "GDP": 1200},
+                    "source_paragraph_ids": ["source-doc#p-1"],
+                    "confidence": 0.8,
+                }
+            ]
+        }
+
+        candidates = build_agent_candidates_from_skill_result(
+            task_spec=task_spec,
+            template_spec=template_spec,
+            source_doc=self.source_doc,
+            skill_result=skill_result,
+        )
+
+        table_b = [candidate for candidate in candidates if candidate.target_table_id == "table-b"]
+        self.assertEqual(len(table_b), 1)
+        self.assertEqual(table_b[0].values["基础信息-城市"], "北京")
+        self.assertEqual(table_b[0].values["经济指标-GDP"], 1200)
+
+    def test_agent_candidate_honors_explicit_target_table_id(self) -> None:
+        template_spec = TemplateSpec(
+            template_doc_id="template-doc",
+            target_tables=[
+                TargetTableSpec(
+                    target_table_id="table-a",
+                    logical_name="city-a",
+                    schema=[FieldSpec("a1", "城市", "城市", "string", True)],
+                ),
+                TargetTableSpec(
+                    target_table_id="table-b",
+                    logical_name="city-b",
+                    schema=[FieldSpec("b1", "城市", "城市", "string", True)],
+                ),
+            ],
+        )
+        skill_result = {
+            "records": [
+                {
+                    "target_table_id": "table-b",
+                    "values": {"城市": "北京"},
+                    "source_paragraph_ids": ["source-doc#p-1"],
+                    "confidence": 0.8,
+                }
+            ]
+        }
+
+        candidates = build_agent_candidates_from_skill_result(
+            task_spec=TaskSpec("task-3", "fill_table", "template-doc"),
+            template_spec=template_spec,
+            source_doc=self.source_doc,
+            skill_result=skill_result,
+        )
+
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0].target_table_id, "table-b")
 
 
 if __name__ == "__main__":

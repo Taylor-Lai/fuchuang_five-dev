@@ -4,7 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from docnexus_ai.document_operations import FormatAction
+from docnexus_ai.document_operations import FormatAction, build_rule_based_plan
 from docnexus_ai.information_extraction import merge_chunk_extractions
 
 
@@ -20,6 +20,25 @@ class DocumentOperationModelTests(unittest.TestCase):
         self.assertEqual(action.operation, "replace")
         self.assertEqual(action.target_text, "旧文本")
         self.assertEqual(action.content, "新文本")
+
+    def test_rule_plan_splits_complex_command(self) -> None:
+        plan = build_rule_based_plan("把第一段加粗并设为红色，然后将“旧标题”替换为“新标题”，最后添加目录")
+
+        operations = [action.operation for action in plan.actions]
+        self.assertIn("format", operations)
+        self.assertIn("replace", operations)
+        self.assertIn("structure", operations)
+        self.assertEqual(plan.actions[0].target_paragraph_index, 0)
+        self.assertEqual(plan.actions[0].color_hex, "#FF0000")
+
+    def test_rule_plan_inherits_target_for_split_style_command(self) -> None:
+        plan = build_rule_based_plan("把第一段加粗并且设为红色")
+
+        self.assertEqual(len(plan.actions), 1)
+        self.assertEqual(plan.actions[0].operation, "format")
+        self.assertEqual(plan.actions[0].target_paragraph_index, 0)
+        self.assertTrue(plan.actions[0].bold)
+        self.assertEqual(plan.actions[0].color_hex, "#FF0000")
 
 
 class InformationExtractionMetadataTests(unittest.TestCase):
